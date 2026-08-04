@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import SurveyDetailsEditor from './SurveyDetailsEditor';
 import SatelliteTiles from './SatelliteTiles';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/';
+
 const PolygonMap = ({ onRefetchReady }) => {
   const [polygons, setPolygons] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +30,7 @@ const PolygonMap = ({ onRefetchReady }) => {
       }
 
       const response = await fetch(
-        'http://localhost:5000/api/gis/polygons',
+        `${API_BASE}gis/polygons`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
