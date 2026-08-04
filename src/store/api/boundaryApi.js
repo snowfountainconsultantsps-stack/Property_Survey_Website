@@ -1,0 +1,50 @@
+import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+
+// ──────────────────────────────────────────────────────────────
+// boundaryApi — location-hierarchy (State/District/City/Ward) boundary
+// upload + read. Mirrors the backend under /api/boundaries.
+// ──────────────────────────────────────────────────────────────
+export const boundaryApi = createApi({
+  reducerPath: 'boundaryApi',
+  baseQuery: fetchBaseQuery({
+    baseUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/',
+    prepareHeaders: (headers) => {
+      const token = localStorage.getItem('token');
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      return headers;
+    },
+  }),
+  tagTypes: ['Boundaries'],
+  endpoints: (builder) => ({
+    // level: 'STATE' | 'DISTRICT' | 'CITY' | 'WARD', parentId: optional scope
+    getBoundaries: builder.query({
+      query: ({ level, parentId }) =>
+        `boundaries?level=${level}${parentId ? `&parent_id=${parentId}` : ''}`,
+      providesTags: ['Boundaries'],
+    }),
+    // formData: FormData with field `file`
+    uploadSingleBoundary: builder.mutation({
+      query: ({ level, id, formData }) => ({
+        url: `boundaries/${level}/${id}/upload`,
+        method: 'POST',
+        body: formData,
+      }),
+      invalidatesTags: ['Boundaries'],
+    }),
+    // formData: FormData with fields file, match_field, shapefile_field (+ optional parent_id)
+    bulkUploadBoundaries: builder.mutation({
+      query: ({ level, formData }) => ({
+        url: `boundaries/${level}/bulk-upload`,
+        method: 'POST',
+        body: formData,
+      }),
+      invalidatesTags: ['Boundaries'],
+    }),
+  }),
+});
+
+export const {
+  useGetBoundariesQuery,
+  useUploadSingleBoundaryMutation,
+  useBulkUploadBoundariesMutation,
+} = boundaryApi;
