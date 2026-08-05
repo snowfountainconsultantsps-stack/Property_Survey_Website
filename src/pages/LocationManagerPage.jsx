@@ -8,16 +8,24 @@ import {
   useDeleteLocationMutation,
 } from '../store/api/locationApi';
 
-// State → District → City → { Zone → Ward, ULB }. Both Zone and ULB hang off
-// City, so this is a branch, not a straight line — `parentLevel` (not column
-// position) is what drives the drill-down.
+// State → District → ULB → [Zone] → Ward → Locality, with City hanging off
+// District as a parallel, purely geographic label. The ULB — not the city —
+// is the operational parent, because it is the authority that defines wards
+// and levies the tax (one city can hold several ULBs: a Nagar Nigam and a
+// Cantonment Board tax independently).
+//
+// This is a branch, not a straight line, so `parentLevel` (not column
+// position) drives the drill-down.
 const LEVELS = [
   { key: 'states', label: 'State', plural: 'States', parentLevel: null, parentKey: null, nameField: 'name', codeField: 'code', codeLabel: 'Code' },
   { key: 'districts', label: 'District', plural: 'Districts', parentLevel: 'states', parentKey: 'state_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'cities', label: 'City', plural: 'Cities', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'zones', label: 'Zone', plural: 'Zones', parentLevel: 'cities', parentKey: 'city_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'wards', label: 'Ward', plural: 'Wards', parentLevel: 'zones', parentKey: 'zone_id', nameField: 'ward_name', codeField: 'ward_number', codeLabel: 'Ward No.' },
-  { key: 'ulbs', label: 'ULB', plural: 'ULBs', parentLevel: 'cities', parentKey: 'city_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
+  { key: 'cities', label: 'City', plural: 'Cities', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Geographic label only — wards belong to a ULB.' },
+  { key: 'ulbs', label: 'ULB', plural: 'ULBs', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
+  { key: 'zones', label: 'Zone', plural: 'Zones', parentLevel: 'ulbs', parentKey: 'ulb_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Optional — small ULBs go straight to wards.' },
+  // Wards belong to the ULB, so a ULB without zones can still have wards.
+  // Picking a zone narrows the list further (see `narrowBy` in rowsFor).
+  { key: 'wards', label: 'Ward', plural: 'Wards', parentLevel: 'ulbs', parentKey: 'ulb_id', narrowBy: { level: 'zones', key: 'zone_id' }, nameField: 'ward_name', codeField: 'ward_number', codeLabel: 'Ward No.' },
+  { key: 'localities', label: 'Locality', plural: 'Localities', parentLevel: 'wards', parentKey: 'ward_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Mohalla / colony — optional, boundary optional.' },
 ];
 
 // A level's transitive descendants, for clearing selections when a parent
@@ -28,7 +36,10 @@ const descendantKeys = (levelKey) => {
   while (grew) {
     grew = false;
     for (const l of LEVELS) {
-      if (l.parentLevel && (l.parentLevel === levelKey || out.has(l.parentLevel)) && !out.has(l.key)) {
+      // A level also depends on whatever narrows it (zone → ward), so changing
+      // that must clear it too or the column shows a stale selection.
+      const parents = [l.parentLevel, l.narrowBy?.level].filter(Boolean);
+      if (parents.some((p) => p === levelKey || out.has(p)) && !out.has(l.key)) {
         out.add(l.key);
         grew = true;
       }
@@ -37,7 +48,7 @@ const descendantKeys = (levelKey) => {
   return out;
 };
 
-function LocationModal({ level, parentId, existing, onClose }) {
+function LocationModal({ level, parentId, narrowId, existing, onClose }) {
   const isEdit = Boolean(existing);
   const [name, setName] = useState(existing?.[level.nameField] || '');
   const [code, setCode] = useState(existing?.[level.codeField] || '');
@@ -51,6 +62,9 @@ function LocationModal({ level, parentId, existing, onClose }) {
 
     const body = { [level.nameField]: name.trim(), [level.codeField]: code.trim() || null };
     if (level.parentKey && !isEdit) body[level.parentKey] = parentId;
+    // e.g. creating a ward while a zone is selected files it under that zone;
+    // with no zone selected it simply belongs to the ULB directly.
+    if (level.narrowBy && narrowId && !isEdit) body[level.narrowBy.key] = narrowId;
 
     try {
       if (isEdit) {
@@ -103,7 +117,7 @@ function LocationModal({ level, parentId, existing, onClose }) {
   );
 }
 
-function LevelColumn({ level, rows, selectedId, onSelect, parentId, showArchived }) {
+function LevelColumn({ level, rows, selectedId, onSelect, parentId, narrowId, showArchived }) {
   const [modal, setModal] = useState(null); // { existing? }
   const [deleteLocation] = useDeleteLocationMutation();
 
@@ -216,6 +230,7 @@ function LevelColumn({ level, rows, selectedId, onSelect, parentId, showArchived
         <LocationModal
           level={level}
           parentId={parentId}
+          narrowId={narrowId}
           existing={modal.existing}
           onClose={() => setModal(null)}
         />
@@ -229,16 +244,25 @@ export default function LocationManagerPage() {
   const [selected, setSelected] = useState({});
   const [showArchived, setShowArchived] = useState(false);
 
-  const tree = data?.data || { states: [], districts: [], cities: [], zones: [], ulbs: [], wards: [] };
+  const tree = data?.data || {
+    states: [], districts: [], cities: [], ulbs: [], zones: [], wards: [], localities: [],
+  };
 
-  // Each column shows only the children of its parent level's current selection.
+  // Each column shows only the children of its parent level's current
+  // selection, optionally narrowed further by a secondary level (wards belong
+  // to a ULB but can also be filtered down to a chosen zone).
   const rowsFor = useMemo(() => {
     const out = {};
     for (const lvl of LEVELS) {
       const all = tree[lvl.key] || [];
-      out[lvl.key] = lvl.parentKey
+      let rows = lvl.parentKey
         ? all.filter((r) => String(r[lvl.parentKey]) === String(selected[lvl.parentLevel]))
         : all;
+      const nb = lvl.narrowBy;
+      if (nb && selected[nb.level]) {
+        rows = rows.filter((r) => String(r[nb.key]) === String(selected[nb.level]));
+      }
+      out[lvl.key] = rows;
     }
     return out;
   }, [tree, selected]);
@@ -299,6 +323,7 @@ export default function LocationManagerPage() {
                   selectedId={selected[lvl.key]}
                   onSelect={(id) => select(lvl.key, id)}
                   parentId={parentIdFor(lvl)}
+                  narrowId={lvl.narrowBy ? selected[lvl.narrowBy.level] : null}
                   showArchived={showArchived}
                 />
               ))}

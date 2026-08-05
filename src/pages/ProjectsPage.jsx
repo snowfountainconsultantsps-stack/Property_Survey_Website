@@ -43,12 +43,14 @@ function CreateProjectModal({ onClose }) {
   const [createProject, { isLoading }] = useCreateProjectMutation();
 
   // Cascading location lookups — each level loads once its parent is chosen.
+  // ULBs hang off the District (they are the taxing authority); City is an
+  // optional geographic label, not a step on the way to the ULB.
   const { data: statesRes } = useGetStatesQuery();
   const { data: districtsRes } = useGetDistrictsQuery(form.state_id, { skip: !form.state_id });
   const { data: citiesRes } = useGetCitiesQuery(form.district_id, { skip: !form.district_id });
   const { data: ulbsRes } = useGetLocationsQuery(
-    { level: 'ulbs', parentId: form.city_id },
-    { skip: !form.city_id }
+    { level: 'ulbs', parentId: form.district_id },
+    { skip: !form.district_id }
   );
   const states = statesRes?.data || [];
   const districts = districtsRes?.data || [];
@@ -59,7 +61,6 @@ function CreateProjectModal({ onClose }) {
   // Picking a parent invalidates everything below it.
   const setState = (e) => setForm((f) => ({ ...f, state_id: e.target.value, district_id: '', city_id: '', ulb_id: '' }));
   const setDistrict = (e) => setForm((f) => ({ ...f, district_id: e.target.value, city_id: '', ulb_id: '' }));
-  const setCity = (e) => setForm((f) => ({ ...f, city_id: e.target.value, ulb_id: '' }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -113,17 +114,25 @@ function CreateProjectModal({ onClose }) {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">City</label>
-              <select value={form.city_id} onChange={setCity} disabled={!form.district_id} className={selectCls}>
-                <option value="">Select city…</option>
-                {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                ULB <span className="text-gray-400 font-normal">(taxing authority)</span>
+              </label>
+              <select value={form.ulb_id} onChange={set('ulb_id')} disabled={!form.district_id} className={selectCls}>
+                <option value="">Select ULB…</option>
+                {ulbs.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}{u.ulb_type ? ` — ${u.ulb_type}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">ULB</label>
-              <select value={form.ulb_id} onChange={set('ulb_id')} disabled={!form.city_id} className={selectCls}>
-                <option value="">Select ULB…</option>
-                {ulbs.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                City <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <select value={form.city_id} onChange={set('city_id')} disabled={!form.district_id} className={selectCls}>
+                <option value="">Select city…</option>
+                {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
           </div>

@@ -7,6 +7,11 @@ import toast from 'react-hot-toast';
 import { useState } from 'react';
 import ThemeToggle from '../components/ThemeToggle';
 
+// Labels are present in the DOM at all times (so screen readers and the
+// keyboard tab order still see them) but collapse to zero width on desktop
+// until the rail is hovered.
+const LABEL = 'whitespace-nowrap overflow-hidden transition-all duration-200 lg:w-0 lg:opacity-0 lg:group-hover:w-auto lg:group-hover:opacity-100';
+
 export default function AdminSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,24 +54,28 @@ export default function AdminSidebar() {
         {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
       </button>
 
-      {/* Sidebar */}
+      {/* Sidebar. Declared before the spacer so Tailwind's `peer` variant can
+          drive the spacer's width from this element's hover state — the aside
+          is `fixed`, so DOM order doesn't affect where either one renders. */}
       <aside
-        className={`fixed lg:sticky lg:top-0 w-64 h-screen bg-blue-900 text-white transition-transform duration-300 transform ${
-          isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-        } z-40`}
+        className={`group peer fixed top-0 left-0 h-screen bg-blue-900 text-white z-40 flex flex-col
+          w-64 lg:w-20 lg:hover:w-64
+          transition-[width,transform] duration-200 ease-out
+          ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-        <div className="p-6 border-b border-blue-800">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="w-8 h-8" />
-              <h1 className="text-xl font-bold">Admin Panel</h1>
-            </div>
+        {/* Brand */}
+        <div className="h-[73px] flex-shrink-0 flex items-center gap-3 px-6 border-b border-blue-800 lg:px-0 lg:group-hover:px-6 transition-all duration-200">
+          <div className="flex items-center gap-3 flex-1 min-w-0 lg:justify-center lg:group-hover:justify-start">
+            <BarChart3 className="w-8 h-8 flex-shrink-0" />
+            <h1 className={`text-xl font-bold ${LABEL}`}>Admin Panel</h1>
+          </div>
+          <div className={LABEL}>
             <ThemeToggle className="text-blue-100 hover:bg-blue-800" />
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="p-6 space-y-2">
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2">
           {menuItems.map((item) => {
             const Icon = item.icon;
             const isActive = item.exact
@@ -77,30 +86,41 @@ export default function AdminSidebar() {
                 key={item.path}
                 to={item.path}
                 onClick={() => setIsOpen(false)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                // Native tooltip so collapsed icons are still identifiable.
+                title={item.name}
+                className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-colors lg:justify-center lg:group-hover:justify-start ${
                   isActive
                     ? 'bg-blue-700 text-white'
                     : 'text-blue-100 hover:bg-blue-800'
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                <span>{item.name}</span>
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                <span className={LABEL}>{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        {/* Logout button */}
-        <div className="absolute bottom-0 w-full p-6 border-t border-blue-800">
+        {/* Logout */}
+        <div className="flex-shrink-0 p-4 border-t border-blue-800">
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+            title="Logout"
+            className="w-full flex items-center gap-3 px-3 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors lg:justify-center lg:group-hover:justify-start"
           >
-            <LogOut className="w-5 h-5" />
-            <span>Logout</span>
+            <LogOut className="w-5 h-5 flex-shrink-0" />
+            <span className={LABEL}>Logout</span>
           </button>
         </div>
       </aside>
+
+      {/* Occupies the sidebar's slot in the flex row and grows with it, so the
+          page content slides right as the rail expands instead of being
+          covered by it. Widths must stay in step with the aside above. */}
+      <div
+        aria-hidden="true"
+        className="hidden lg:block flex-shrink-0 w-20 peer-hover:w-64 transition-[width] duration-200 ease-out"
+      />
 
       {/* Overlay for mobile */}
       {isOpen && (
