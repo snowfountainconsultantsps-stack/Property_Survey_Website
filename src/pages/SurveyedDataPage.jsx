@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ClipboardList, MapPin, User, Calendar, Flag, Home, Image as ImageIcon, Calculator, CheckCircle2, Loader2 } from 'lucide-react';
+import { ClipboardList, MapPin, User, Calendar, Flag, Home, Image as ImageIcon, Calculator, CheckCircle2, Loader2, Users, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AssetLayerMap from '../components/AssetLayerMap';
 import TaxBreakdown from '../components/TaxBreakdown';
@@ -160,26 +160,305 @@ function TaxAssessmentPanel({ propertyId }) {
   );
 }
 
+// ── Owner-wise view for multi-unit buildings ──────────────────────
+// A 15-unit complex rendered as one nested tree is unreadable, and it buries
+// the thing that actually matters: who owns what. For multi-entry subtypes the
+// units are regrouped under their owner instead, collapsed by default.
+
+const MULTI_ENTRY = ['MultiStory', 'CommercialComplex'];
+
+const floorName = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 'Floor';
+  if (v === 0) return 'Ground Floor';
+  if (v < 0) return `Basement ${Math.abs(v)}`;
+  const s = ['th', 'st', 'nd', 'rd'], m = v % 100;
+  return `${v}${s[(m - 20) % 10] || s[m] || s[0]} Floor`;
+};
+
+// Group every unit in the building by the people who own it. Joint owners of
+// one unit stay together as a single group (one liability, several names);
+// one person owning several units collapses into one group too.
+function unitsByOwner(property) {
+  const floors = property?.Building?.Floors || [];
+  const groups = new Map();
+
+  for (const f of floors) {
+    for (const u of f.Units || []) {
+      const owners = (u.UnitOwners || []).filter((o) => o && (o.owner_name || o.mobile));
+      const key = owners.length
+        ? owners.map((o) => `${o.owner_name}|${o.mobile || ''}`).sort().join(' + ')
+        : '__none__';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          owners,
+          unassigned: owners.length === 0,
+          isJoint: owners.length > 1,
+          units: [],
+        });
+      }
+      groups.get(key).units.push({ ...u, _floor: f.floor_number });
+    }
+  }
+  return [...groups.values()].sort((a, b) => b.units.length - a.units.length);
+}
+
+function Collapsible({ title, subtitle, badge, badgeTone = 'blue', right, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const tone = {
+    blue: 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400',
+    indigo: 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400',
+    amber: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
+  }[badgeTone];
+
+  return (
+    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-700/40 transition"
+      >
+        <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+            {title}
+            {badge && (
+              <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tone}`}>{badge}</span>
+            )}
+          </p>
+          {subtitle && <p className="text-[11px] text-gray-500 dark:text-gray-400">{subtitle}</p>}
+        </div>
+        {right && <div className="flex-shrink-0">{right}</div>}
+      </button>
+      {open && (
+        <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Signature used to line a UI owner group up with its row in the tax
+// breakdown. Must stay byte-identical to `ownerBreakdown` in the backend's
+// services/taxCalculator.js, or the amounts won't attach.
+const ownerKey = (owners) =>
+  owners.length
+    ? owners.map((o) => `${o.owner_name}|${o.mobile || ''}`).sort().join(' + ')
+    : '__none__';
+
+const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+
+function OwnerUnitsSection({ property, taxByOwner, taxYear }) {
+  const groups = unitsByOwner(property);
+  if (!groups.length) return null;
+
+  return (
+    <div className="mt-4">
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400 mb-2">
+        <Users className="w-3.5 h-3.5" />
+        Owners &amp; their units ({groups.length})
+      </p>
+      <div className="space-y-2">
+        {groups.map((g, i) => {
+          const label = g.unassigned
+            ? 'Owner not recorded'
+            : g.owners.map((o) => o.owner_name).join(' & ');
+          const area = g.units.reduce((s, u) => s + (Number(u.carpet_area) || 0), 0);
+          const tax = taxByOwner?.get(ownerKey(g.owners)) || null;
+          return (
+            <Collapsible
+              key={i}
+              title={label}
+              badge={g.isJoint ? 'JOINT' : g.unassigned ? 'NO OWNER' : null}
+              badgeTone={g.unassigned ? 'amber' : 'indigo'}
+              subtitle={`${g.units.length} unit${g.units.length === 1 ? '' : 's'} · ${area} m² · ${
+                g.units.map((u) => u.unit_number || `#${u.id}`).join(', ')
+              }`}
+              // Payable is the number people look for — keep it on the header
+              // so it's readable without expanding every owner.
+              right={
+                tax && (
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-blue-700 dark:text-blue-400">{inr(tax.tax)}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500">{tax.share_pct}% of building</p>
+                  </div>
+                )
+              }
+            >
+              {/* This owner's demand, derived from their units only. */}
+              {tax && (
+                <div className="mb-3 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 p-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                    <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-700 dark:text-blue-400">
+                      <Calculator className="w-3.5 h-3.5" /> Tax payable {taxYear ? `· ${taxYear}` : ''}
+                    </p>
+                    <p className="text-lg font-extrabold text-blue-700 dark:text-blue-300">{inr(tax.tax)}</p>
+                  </div>
+                  <table className="w-full text-[11px]">
+                    <tbody className="divide-y divide-blue-200/60 dark:divide-blue-900/60">
+                      {tax.spaces?.map((s, j) => (
+                        <tr key={j}>
+                          <td className="py-1 text-gray-700 dark:text-gray-300">{s.label}</td>
+                          <td className="py-1 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                            {s.area_sqm} m² · {s.occupancy}
+                          </td>
+                          <td className="py-1 text-right font-medium text-gray-800 dark:text-gray-200 whitespace-nowrap pl-3">
+                            ARV {inr(s.arv)}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-semibold">
+                        <td className="pt-1.5 text-gray-800 dark:text-gray-200" colSpan={2}>
+                          Rateable value (ARV) · {tax.share_pct}% share of building
+                        </td>
+                        <td className="pt-1.5 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap pl-3">
+                          {inr(tax.arv)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-blue-200 dark:border-blue-900">
+                    <span className="text-xs font-bold text-gray-900 dark:text-gray-100">Final payable</span>
+                    <span className="text-base font-extrabold text-blue-700 dark:text-blue-300">{inr(tax.tax)}</span>
+                  </div>
+                  {g.unassigned && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">
+                      No owner recorded — this demand cannot be issued until one is.
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* Owner contact details, once per group rather than per unit. */}
+              {g.owners.length > 0 && (
+                <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700 grid sm:grid-cols-2 gap-3">
+                  {g.owners.map((o, j) => (
+                    <div key={j} className="text-xs">
+                      <p className="font-semibold text-gray-800 dark:text-gray-200">{o.owner_name}</p>
+                      {o.father_or_husband_name && (
+                        <p className="text-gray-500 dark:text-gray-400">S/o, W/o {o.father_or_husband_name}</p>
+                      )}
+                      <p className="text-gray-500 dark:text-gray-400">
+                        {[o.occupation, o.mobile, o.aadhar].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Each unit in full — utilities, photos and all. */}
+              <div className="space-y-3">
+                {g.units.map((u) => (
+                  <div key={u.id} className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                    <p className="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">
+                      {floorName(u._floor)} · Unit {u.unit_number || u.id}
+                    </p>
+                    {/* Owners already shown above; drop them from the dump. */}
+                    <RecordBody record={(({ UnitOwners, _floor, ...rest }) => rest)(u)} />
+                  </div>
+                ))}
+              </div>
+            </Collapsible>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Floors with no units (parking decks, service floors) still need showing —
+// they carry area and are taxed, they just have no owner of their own.
+function NonUnitFloors({ property }) {
+  const floors = (property?.Building?.Floors || []).filter((f) => !(f.Units || []).length);
+  if (!floors.length) return null;
+  return (
+    <div className="mt-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400 mb-2">
+        Common / non-unit floors ({floors.length})
+      </p>
+      <div className="space-y-2">
+        {floors.map((f) => (
+          <Collapsible
+            key={f.id}
+            title={floorName(f.floor_number)}
+            subtitle={[f.floor_use, f.carpet_area ? `${f.carpet_area} m²` : null].filter(Boolean).join(' · ')}
+          >
+            <RecordBody record={(({ Units, ...rest }) => rest)(f)} />
+          </Collapsible>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// One surveyed property. The tax is fetched here rather than only inside
+// TaxAssessmentPanel so each owner's slice can be shown alongside their units
+// — RTK Query dedupes the two calls, so it's still a single request.
+function PropertyBlock({ property: p, index, total }) {
+  const isMultiUnit =
+    MULTI_ENTRY.includes(p.property_subtype) && (p.Building?.Floors || []).length > 0;
+
+  const { data: taxData } = useGetPropertyTaxQuery(p.id, { skip: !p.id || !isMultiUnit });
+  const computed = taxData?.data?.computed;
+
+  // Index the tax breakdown by the same owner signature the UI groups on.
+  const taxByOwner = useMemo(() => {
+    const rows = computed?.owner_breakdown;
+    if (!rows?.length) return null;
+    const m = new Map();
+    rows.forEach((r) => {
+      if (r.is_common) return;
+      m.set(ownerKey(r.owners || []), r);
+    });
+    return m;
+  }, [computed]);
+
+  return (
+    <div className="px-5 py-4">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400">
+          <Home className="w-3 h-3" /> Property survey
+        </span>
+        <h4 className="font-bold text-gray-900 dark:text-gray-100">
+          {total > 1 ? `#${index + 1} · ` : ''}
+          {[p.property_type, p.property_subtype].filter(Boolean).join(' / ') || 'Property'}
+        </h4>
+        {p.property_code && (
+          <span className="text-xs font-mono text-gray-400 dark:text-gray-500">{p.property_code}</span>
+        )}
+      </div>
+
+      {isMultiUnit ? (
+        <>
+          {/* Property + building basics, minus the floor/unit tree — that is
+              re-presented owner-wise below instead of as a deep dump. */}
+          <RecordBody
+            record={{
+              ...p,
+              Building: p.Building ? (({ Floors, ...rest }) => rest)(p.Building) : null,
+            }}
+          />
+          <OwnerUnitsSection
+            property={p}
+            taxByOwner={taxByOwner}
+            taxYear={computed?.assessment_year}
+          />
+          <NonUnitFloors property={p} />
+        </>
+      ) : (
+        <RecordBody record={p} />
+      )}
+
+      {p.id && <TaxAssessmentPanel propertyId={p.id} />}
+    </div>
+  );
+}
+
 // Full property tree for a parcel (one entry, or several for Multi-storey /
 // Commercial-complex which allow multiple properties per polygon).
 function PropertyFullDetail({ properties }) {
   return (
     <div className="divide-y divide-gray-200 dark:divide-gray-700">
       {properties.map((p, i) => (
-        <div key={p.id || i} className="px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <span className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400">
-              <Home className="w-3 h-3" /> Property survey
-            </span>
-            <h4 className="font-bold text-gray-900 dark:text-gray-100">
-              {properties.length > 1 ? `#${i + 1} · ` : ''}
-              {[p.property_type, p.property_subtype].filter(Boolean).join(' / ') || 'Property'}
-            </h4>
-            {p.property_code && <span className="text-xs font-mono text-gray-400 dark:text-gray-500">{p.property_code}</span>}
-          </div>
-          <RecordBody record={p} />
-          {p.id && <TaxAssessmentPanel propertyId={p.id} />}
-        </div>
+        <PropertyBlock key={p.id || i} property={p} index={i} total={properties.length} />
       ))}
     </div>
   );

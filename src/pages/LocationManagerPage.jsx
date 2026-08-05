@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Building2, Plus, X, Pencil, Archive, Trash2, ChevronRight } from 'lucide-react';
+import { Building2, Plus, X, Pencil, Archive, Trash2, ChevronRight, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   useGetLocationTreeQuery,
@@ -7,6 +7,7 @@ import {
   useUpdateLocationMutation,
   useDeleteLocationMutation,
 } from '../store/api/locationApi';
+import BoundaryImportModal from '../components/BoundaryImportModal';
 
 // State → District → ULB → [Zone] → Ward → Locality, with City hanging off
 // District as a parallel, purely geographic label. The ULB — not the city —
@@ -16,16 +17,18 @@ import {
 //
 // This is a branch, not a straight line, so `parentLevel` (not column
 // position) drives the drill-down.
+// `boundaryLevel` is the key the /api/boundaries endpoints use, so each column
+// can import its rows straight from a shapefile instead of being typed in.
 const LEVELS = [
-  { key: 'states', label: 'State', plural: 'States', parentLevel: null, parentKey: null, nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'districts', label: 'District', plural: 'Districts', parentLevel: 'states', parentKey: 'state_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'cities', label: 'City', plural: 'Cities', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Geographic label only — wards belong to a ULB.' },
-  { key: 'ulbs', label: 'ULB', plural: 'ULBs', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code' },
-  { key: 'zones', label: 'Zone', plural: 'Zones', parentLevel: 'ulbs', parentKey: 'ulb_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Optional — small ULBs go straight to wards.' },
+  { key: 'states', label: 'State', plural: 'States', parentLevel: null, parentKey: null, nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'STATE' },
+  { key: 'districts', label: 'District', plural: 'Districts', parentLevel: 'states', parentKey: 'state_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'DISTRICT' },
+  { key: 'cities', label: 'City', plural: 'Cities', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'CITY', note: 'Geographic label only — wards belong to a ULB.' },
+  { key: 'ulbs', label: 'ULB', plural: 'ULBs', parentLevel: 'districts', parentKey: 'district_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'ULB' },
+  { key: 'zones', label: 'Zone', plural: 'Zones', parentLevel: 'ulbs', parentKey: 'ulb_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'ZONE', note: 'Optional — small ULBs go straight to wards.' },
   // Wards belong to the ULB, so a ULB without zones can still have wards.
   // Picking a zone narrows the list further (see `narrowBy` in rowsFor).
-  { key: 'wards', label: 'Ward', plural: 'Wards', parentLevel: 'ulbs', parentKey: 'ulb_id', narrowBy: { level: 'zones', key: 'zone_id' }, nameField: 'ward_name', codeField: 'ward_number', codeLabel: 'Ward No.' },
-  { key: 'localities', label: 'Locality', plural: 'Localities', parentLevel: 'wards', parentKey: 'ward_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', note: 'Mohalla / colony — optional, boundary optional.' },
+  { key: 'wards', label: 'Ward', plural: 'Wards', parentLevel: 'ulbs', parentKey: 'ulb_id', narrowBy: { level: 'zones', key: 'zone_id' }, nameField: 'ward_name', codeField: 'ward_number', codeLabel: 'Ward No.', boundaryLevel: 'WARD' },
+  { key: 'localities', label: 'Locality', plural: 'Localities', parentLevel: 'wards', parentKey: 'ward_id', nameField: 'name', codeField: 'code', codeLabel: 'Code', boundaryLevel: 'LOCALITY', note: 'Mohalla / colony — optional, boundary optional.' },
 ];
 
 // A level's transitive descendants, for clearing selections when a parent
@@ -117,8 +120,9 @@ function LocationModal({ level, parentId, narrowId, existing, onClose }) {
   );
 }
 
-function LevelColumn({ level, rows, selectedId, onSelect, parentId, narrowId, showArchived }) {
+function LevelColumn({ level, rows, selectedId, onSelect, parentId, narrowId, showArchived, onImported }) {
   const [modal, setModal] = useState(null); // { existing? }
+  const [importOpen, setImportOpen] = useState(false);
   const [deleteLocation] = useDeleteLocationMutation();
 
   const canAdd = level.parentKey === null || Boolean(parentId);
@@ -148,19 +152,38 @@ function LevelColumn({ level, rows, selectedId, onSelect, parentId, narrowId, sh
   const visible = showArchived ? rows : rows.filter((r) => r.is_active !== false);
 
   return (
-    <div className="flex-1 min-w-[220px] bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
-        <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100">
-          {level.plural} <span className="text-gray-400 dark:text-gray-500 font-normal">({visible.length})</span>
-        </h3>
-        <button
-          onClick={() => setModal({})}
-          disabled={!canAdd}
-          title={canAdd ? `Add ${level.label}` : `Select a ${LEVELS.find((l) => l.key === level.parentLevel)?.label} first`}
-          className="p-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 disabled:text-gray-300 dark:disabled:text-gray-600 disabled:hover:bg-transparent"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
+    <div className="flex-1 min-w-[180px] bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex flex-col">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100">
+            {level.plural} <span className="text-gray-400 dark:text-gray-500 font-normal">({visible.length})</span>
+          </h3>
+          <div className="flex items-center gap-0.5">
+            {/* Import the whole level from a shapefile — the usual way to
+                populate this, rather than typing rows one at a time. */}
+            <button
+              onClick={() => setImportOpen(true)}
+              disabled={!canAdd}
+              title={canAdd ? `Import ${level.plural} from shapefile` : `Select a ${LEVELS.find((l) => l.key === level.parentLevel)?.label} first`}
+              className="p-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 disabled:text-gray-300 dark:disabled:text-gray-600 disabled:hover:bg-transparent"
+            >
+              <Upload className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setModal({})}
+              disabled={!canAdd}
+              title={canAdd ? `Add ${level.label}` : `Select a ${LEVELS.find((l) => l.key === level.parentLevel)?.label} first`}
+              className="p-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 disabled:text-gray-300 dark:disabled:text-gray-600 disabled:hover:bg-transparent"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        {/* Explains levels that behave differently — City is a label, Zone and
+            Locality are optional — so the shape isn't guesswork. */}
+        {level.note && (
+          <p className="text-[10px] leading-snug text-gray-400 dark:text-gray-500 mt-1">{level.note}</p>
+        )}
       </div>
 
       <div className="divide-y divide-gray-200 dark:divide-gray-700 overflow-y-auto max-h-[460px]">
@@ -235,12 +258,26 @@ function LevelColumn({ level, rows, selectedId, onSelect, parentId, narrowId, sh
           onClose={() => setModal(null)}
         />
       )}
+
+      {importOpen && (
+        <BoundaryImportModal
+          level={level.boundaryLevel}
+          levelLabel={level.plural}
+          parentId={parentId}
+          onClose={(imported) => {
+            setImportOpen(false);
+            // boundaryApi and locationApi are separate slices, so the tree
+            // won't invalidate on its own after an import.
+            if (imported) onImported?.();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 export default function LocationManagerPage() {
-  const { data, isLoading, isError } = useGetLocationTreeQuery();
+  const { data, isLoading, isError, refetch } = useGetLocationTreeQuery();
   const [selected, setSelected] = useState({});
   const [showArchived, setShowArchived] = useState(false);
 
@@ -311,10 +348,17 @@ export default function LocationManagerPage() {
 
         {!isLoading && !isError && (
           <>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-              Click a row to drill into the next level. Hover a row for edit / archive actions.
-            </p>
-            <div className="flex gap-4 overflow-x-auto pb-2">
+            <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Click a row to drill into the next level. Hover a row for edit / archive actions.
+              </p>
+              {/* Seven levels don't fit most screens — say so, or the last
+                  columns (Ward, Locality) look like they're missing. */}
+              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1 whitespace-nowrap">
+                Scroll sideways for Ward &amp; Locality <span aria-hidden="true">→</span>
+              </p>
+            </div>
+            <div className="flex gap-3 overflow-x-auto pb-2">
               {LEVELS.map((lvl) => (
                 <LevelColumn
                   key={lvl.key}
@@ -325,6 +369,7 @@ export default function LocationManagerPage() {
                   parentId={parentIdFor(lvl)}
                   narrowId={lvl.narrowBy ? selected[lvl.narrowBy.level] : null}
                   showArchived={showArchived}
+                  onImported={refetch}
                 />
               ))}
             </div>

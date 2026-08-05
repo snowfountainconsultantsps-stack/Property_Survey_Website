@@ -40,6 +40,26 @@ export const boundaryApi = createApi({
       }),
       invalidatesTags: ['Boundaries'],
     }),
+
+    // ─── Import: build the hierarchy FROM a shapefile ──────────────
+    // Preview writes nothing — it reports the file's attribute fields and,
+    // once a name field is chosen, exactly which rows would be created or
+    // updated. Commit re-sends the same file with the confirmed mapping.
+    previewBoundaryImport: builder.mutation({
+      query: ({ level, formData }) => ({
+        url: `boundaries/${level}/import/preview`,
+        method: 'POST',
+        body: formData,
+      }),
+    }),
+    commitBoundaryImport: builder.mutation({
+      query: ({ level, formData }) => ({
+        url: `boundaries/${level}/import/commit`,
+        method: 'POST',
+        body: formData,
+      }),
+      invalidatesTags: ['Boundaries'],
+    }),
   }),
 });
 
@@ -47,4 +67,6 @@ export const {
   useGetBoundariesQuery,
   useUploadSingleBoundaryMutation,
   useBulkUploadBoundariesMutation,
+  usePreviewBoundaryImportMutation,
+  useCommitBoundaryImportMutation,
 } = boundaryApi;
