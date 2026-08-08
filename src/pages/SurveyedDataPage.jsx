@@ -12,6 +12,7 @@ import {
   useApprovePropertyTaxMutation,
 } from '../store/api/assetApi';
 import { useGetPropertiesByPolygonQuery } from '../store/api/surveyApi';
+import { useGetLocationTreeQuery } from '../store/api/locationApi';
 
 const LEGEND = [
   { color: '#22c55e', label: 'Surveyed' },
@@ -618,6 +619,20 @@ export default function SurveyedDataPage() {
   const layer = allLayers.find((l) => String(l.id) === String(layerId));
   const shown = layer ? [layer] : [];
 
+  // Names for the hierarchy a feature was stamped with, so its popup reads
+  // "Ward No-9" rather than "ward_id: 9". One cached request, shared with the
+  // rest of the admin UI.
+  const { data: treeRes } = useGetLocationTreeQuery();
+  const areaNames = useMemo(() => {
+    const t = treeRes?.data || {};
+    const index = (rows, nameOf) => Object.fromEntries((rows || []).map((r) => [r.id, nameOf(r)]));
+    return {
+      zone: index(t.zones, (z) => z.name),
+      ward: index(t.wards, (w) => w.ward_name || `Ward ${w.ward_number}`),
+      locality: index(t.localities, (l) => l.name),
+    };
+  }, [treeRes]);
+
   const counts = useMemo(() => {
     const feats = layer?.geojson?.features || [];
     let done = 0, progress = 0, flagged = 0;
@@ -692,6 +707,7 @@ export default function SurveyedDataPage() {
               layers={shown}
               height={480}
               colorBySurvey
+              areaNames={areaNames}
               loading={isFetching}
               loadingText="Loading survey progress…"
               selectedFeatureId={selected?.properties?.id ?? null}

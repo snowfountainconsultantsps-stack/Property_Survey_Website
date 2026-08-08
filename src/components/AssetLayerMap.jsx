@@ -72,7 +72,46 @@ function pointToLayer(layer, colorBySurvey, selectedId) {
   };
 }
 
-function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
+// System columns are never shown raw: an id is meaningless to read on a map,
+// and the hierarchy ids in particular are rendered as names above instead.
+const POPUP_HIDDEN_KEYS = [
+  'id', 'layer_id', 'project_id', 'zone_id', 'ward_id', 'locality_id',
+  'polygon_id', 'upload_id', 'survey_state', 'is_surveyed', 'survey_id',
+];
+
+const esc = (v) =>
+  String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/**
+ * Where the feature sits in the hierarchy, as names.
+ * `areaNames` is { zone: {id: name}, ward: {id: name}, locality: {id: name} } —
+ * resolved on the client from the location tree the page already holds, rather
+ * than repeating the same ten ward names across thousands of features in every
+ * map payload.
+ */
+function areaRows(p, areaNames) {
+  if (!areaNames) return '';
+  const line = (label, name, id) => {
+    if (!id) return '';
+    // A stamped id whose name is missing means the row was deleted — say so
+    // rather than printing a bare number.
+    const text = name || `#${id} (not found)`;
+    return `<div><span style="color:#64748b">${label}:</span> <b>${esc(text)}</b></div>`;
+  };
+  const rows =
+    line('Zone', areaNames.zone?.[p.zone_id], p.zone_id) +
+    line('Ward', areaNames.ward?.[p.ward_id], p.ward_id) +
+    line('Locality', areaNames.locality?.[p.locality_id], p.locality_id);
+
+  if (!rows) {
+    // No stamp at all is worth flagging: this feature is missing from every
+    // ward filter and surveyor allocation.
+    return `<div style="margin-top:4px;font-size:12px;color:#b45309">Not inside any ward boundary</div>`;
+  }
+  return `<div style="margin-top:4px;font-size:12px;padding-bottom:4px;border-bottom:1px solid #e2e8f0">${rows}</div>`;
+}
+
+function onEachFeature(layer, { onEdit, onDelete, onSelect, areaNames } = {}) {
   return (feature, lyr) => {
     const p = feature.properties || {};
     // Selecting drives a detail panel outside the map, so it takes precedence
@@ -81,9 +120,9 @@ function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
       lyr.on('click', () => onSelect(feature));
     }
     const rows = Object.entries(p)
-      .filter(([k]) => !['id', 'layer_id', 'project_id', 'ward_id', 'polygon_id', 'upload_id'].includes(k))
+      .filter(([k]) => !POPUP_HIDDEN_KEYS.includes(k))
       .slice(0, 10)
-      .map(([k, v]) => `<div><span style="color:#64748b">${k}:</span> ${v ?? '—'}</div>`)
+      .map(([k, v]) => `<div><span style="color:#64748b">${esc(k)}:</span> ${v == null ? '—' : esc(v)}</div>`)
       .join('');
     const editable = Boolean(onEdit || onDelete);
     const actions = editable
@@ -93,9 +132,9 @@ function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
         </div>`
       : '';
     lyr.bindPopup(
-      `<div style="min-width:160px"><b>${layer.name}</b>${
-        p.feature_code ? ` — ${p.feature_code}` : ''
-      }<div style="margin-top:4px;font-size:12px">${rows}</div>${actions}</div>`
+      `<div style="min-width:180px"><b>${esc(layer.name)}</b>${
+        p.feature_code ? ` — ${esc(p.feature_code)}` : ''
+      }${areaRows(p, areaNames)}<div style="margin-top:4px;font-size:12px">${rows}</div>${actions}</div>`
     );
 
     if (editable) {
@@ -131,10 +170,14 @@ function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
  *        covers the map; with features already on screen it shows a corner
  *        chip so the map stays readable and pannable while it updates.
  * @param {string} loadingText  What is being waited for, e.g. 'Applying filter…'.
+ * @param {object} areaNames  { zone: {id: name}, ward: {id: name}, locality:
+ *        {id: name} } used to name a feature's hierarchy in its popup. Without
+ *        it the popup simply omits the area block rather than printing ids.
  */
 export default function AssetLayerMap({
   layers = [],
   overlays = [],
+  areaNames = null,
   loading = false,
   loadingText = 'Loading…',
   height = 520,
@@ -247,6 +290,7 @@ export default function AssetLayerMap({
               style={styleFor(l, colorBySurvey, selectedFeatureId)}
               pointToLayer={pointToLayer(l, colorBySurvey, selectedFeatureId)}
               onEachFeature={onEachFeature(l, {
+                areaNames,
                 ...(editable ? { onEdit: onEditFeature, onDelete: onDeleteFeature } : {}),
                 ...(onSelectFeature ? { onSelect: onSelectFeature } : {}),
               })}

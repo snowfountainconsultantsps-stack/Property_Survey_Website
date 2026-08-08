@@ -323,7 +323,7 @@ const FEATURE_SYSTEM_KEYS = [
   'feature_code', 'source', 'status', 'length_m', 'area_sqm', 'upload_id',
 ];
 
-function EditFeatureModal({ feature, onClose }) {
+function EditFeatureModal({ feature, areaNames, onClose }) {
   const p = feature.properties || {};
   const [featureCode, setFeatureCode] = useState(p.feature_code || '');
   const [fields, setFields] = useState(() => {
@@ -369,6 +369,27 @@ function EditFeatureModal({ feature, onClose }) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={save} className="p-6 space-y-4">
+          {/* Read-only: the area comes from the geometry, so it's corrected by
+              fixing a boundary and re-matching, not by typing here. */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs bg-gray-50 dark:bg-gray-900/50 rounded-lg px-3 py-2">
+            {[
+              ['Zone', areaNames?.zone?.[p.zone_id], p.zone_id],
+              ['Ward', areaNames?.ward?.[p.ward_id], p.ward_id],
+              ['Locality', areaNames?.locality?.[p.locality_id], p.locality_id],
+            ].map(([label, name, id]) =>
+              id ? (
+                <span key={label} className="text-gray-500 dark:text-gray-400">
+                  {label}: <b className="text-gray-800 dark:text-gray-200">{name || `#${id} (not found)`}</b>
+                </span>
+              ) : null
+            )}
+            {!p.zone_id && !p.ward_id && !p.locality_id && (
+              <span className="text-amber-600 dark:text-amber-400">
+                Not inside any ward boundary — hidden from ward filters and surveyor allocations.
+              </span>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Feature Code</label>
             <input value={featureCode} onChange={(e) => setFeatureCode(e.target.value)}
@@ -524,6 +545,19 @@ export default function ProjectDetailPage() {
       : (f) => localities.some((l) => String(l.id) === String(f.id)));
     return out;
   }, [overlays, zoneBounds, wardBounds, localityBounds, area, wards, localities]);
+
+  // id → name for every area in the hierarchy (not just the ones surviving the
+  // current filter), so a feature popup can name where it sits.
+  const areaNames = useMemo(() => {
+    const t = treeRes?.data || {};
+    const index = (rows, nameOf) =>
+      Object.fromEntries((rows || []).map((r) => [r.id, nameOf(r)]));
+    return {
+      zone: index(t.zones, (z) => z.name),
+      ward: index(t.wards, (w) => w.ward_name || `Ward ${w.ward_number}`),
+      locality: index(t.localities, (l) => l.name),
+    };
+  }, [treeRes]);
 
   const areaLabel = useMemo(() => {
     const parts = [];
@@ -827,6 +861,7 @@ export default function ProjectDetailPage() {
               key={reviewUploadId ? `review-${reviewUploadId}` : 'published'}
               layers={reviewUploadId ? reviewLayers : (mapRes?.layers || [])}
               overlays={mapOverlays}
+              areaNames={areaNames}
               loading={reviewUploadId ? reviewLoading : mapLoading}
               loadingText={
                 areaLabel
@@ -902,7 +937,11 @@ export default function ProjectDetailPage() {
       </div>
 
       {editingFeature && (
-        <EditFeatureModal feature={editingFeature} onClose={() => setEditingFeature(null)} />
+        <EditFeatureModal
+          feature={editingFeature}
+          areaNames={areaNames}
+          onClose={() => setEditingFeature(null)}
+        />
       )}
     </div>
   );
