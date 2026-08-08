@@ -123,9 +123,13 @@ function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
  * @param {boolean} colorBySurvey  Colour features by survey progress instead of
  *        their layer style (green done, amber in progress, grey pending, red flagged).
  * @param {number|string} selectedFeatureId  Highlighted feature.
+ * @param {Array} overlays  Administrative boundaries drawn UNDER the assets as
+ *        outlines only: [{ id, name, color, geojson }]. Toggled by the caller,
+ *        never clickable — they are context for the assets, not data to edit.
  */
 export default function AssetLayerMap({
   layers = [],
+  overlays = [],
   height = 520,
   emptyText = 'No features to display.',
   editable = false,
@@ -147,6 +151,11 @@ export default function AssetLayerMap({
   const withFeatures = layers.filter((l) => (l.geojson?.features?.length || 0) > 0);
   const visible = withFeatures.filter((l) => !hidden.has(l.id));
   const totalFeatures = withFeatures.reduce((s, l) => s + (l.geojson?.features?.length || 0), 0);
+
+  const drawnOverlays = overlays.filter((o) => (o.geojson?.features?.length || 0) > 0);
+  // Boundaries only drive the viewport when there are no assets to frame —
+  // otherwise a ward outline would pull the map off the features being reviewed.
+  const fitTargets = visible.length ? visible : drawnOverlays;
 
   return (
     <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-800">
@@ -176,6 +185,23 @@ export default function AssetLayerMap({
             </button>
           );
         })}
+
+        {/* Boundary overlays read as context, so they sit apart from the
+            asset-layer toggles rather than mixed in with them. */}
+        {drawnOverlays.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 w-full pt-1 border-t border-gray-200 dark:border-gray-700">
+            {drawnOverlays.map((o) => (
+              <span key={o.id} className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <span
+                  className="inline-block w-4 h-0 border-t-2 border-dashed"
+                  style={{ borderColor: o.color || '#38bdf8' }}
+                />
+                {o.name}
+                <span className="text-gray-400 dark:text-gray-500">({o.geojson.features.length})</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ height }} className="relative">
@@ -186,7 +212,25 @@ export default function AssetLayerMap({
           scrollWheelZoom
         >
           <SatelliteTiles />
-          <FitBounds layers={visible} />
+          <FitBounds layers={fitTargets} />
+
+          {/* Boundaries first so assets draw on top of them. */}
+          {drawnOverlays.map((o) => (
+            <GeoJSON
+              key={`ov:${o.id}:${o.geojson.features.length}`}
+              data={o.geojson}
+              interactive={false}
+              style={{
+                color: o.color || '#38bdf8',
+                weight: 2,
+                dashArray: '6 4',
+                fill: true,
+                fillColor: o.color || '#38bdf8',
+                fillOpacity: 0.05,
+              }}
+            />
+          ))}
+
           {visible.map((l) => (
             <GeoJSON
               // Re-key on the selection so Leaflet re-runs the style callback

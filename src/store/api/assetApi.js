@@ -56,8 +56,16 @@ export const assetApi = createApi({
       query: (id) => `projects/${id}`,
       providesTags: ['Projects'],
     }),
+    // `area` is an optional { zone_id, ward_id, locality_id } — the totals then
+    // count only what the filtered map is showing.
     getProjectSummary: builder.query({
-      query: (id) => `projects/${id}/summary`,
+      query: (arg) => {
+        const { id, ...area } = typeof arg === 'object' ? arg : { id: arg };
+        const q = new URLSearchParams(
+          Object.entries(area).filter(([, v]) => v !== undefined && v !== null && v !== '')
+        ).toString();
+        return `projects/${id}/summary${q ? `?${q}` : ''}`;
+      },
       providesTags: ['Summary'],
     }),
     createProject: builder.mutation({
@@ -75,8 +83,13 @@ export const assetApi = createApi({
 
     // ─── Layered map (project-scoped) ──────────────────────────
     getAssetMap: builder.query({
-      query: ({ projectId, status = 'PUBLISHED' }) =>
-        `assets/map?project_id=${projectId}&status=${status}`,
+      query: ({ projectId, status = 'PUBLISHED', ...area }) => {
+        const p = new URLSearchParams({ project_id: projectId, status });
+        for (const col of ['zone_id', 'ward_id', 'locality_id']) {
+          if (area[col]) p.set(col, area[col]);
+        }
+        return `assets/map?${p.toString()}`;
+      },
       providesTags: ['Features'],
     }),
 
@@ -111,8 +124,18 @@ export const assetApi = createApi({
       providesTags: ['Features'],
     }),
 
+    // Optional { zone_id, ward_id, locality_id } narrows a staged batch to one
+    // area while it's being reviewed.
     getUploadFeatures: builder.query({
-      query: (uploadId) => `assets/uploads/${uploadId}/features`,
+      query: (arg) => {
+        const { uploadId, ...area } = typeof arg === 'object' ? arg : { uploadId: arg };
+        const p = new URLSearchParams();
+        for (const col of ['zone_id', 'ward_id', 'locality_id']) {
+          if (area[col]) p.set(col, area[col]);
+        }
+        const q = p.toString();
+        return `assets/uploads/${uploadId}/features${q ? `?${q}` : ''}`;
+      },
       providesTags: ['Features'],
     }),
     // Body: { feature_code?, properties?, status?, geometry?, ward_id?, polygon_id? }

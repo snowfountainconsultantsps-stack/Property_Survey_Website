@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, Upload, FileText, CheckCircle2, XCircle, Trash2, Eye, X,
-  Layers, Ruler, Flag, Database, MapPin,
+  Layers, Ruler, Flag, Database, MapPin, Filter,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AssetLayerMap from '../components/AssetLayerMap';
@@ -21,6 +21,8 @@ import {
   useDeleteUploadMutation,
   useMatchUploadAreasMutation,
 } from '../store/api/assetApi';
+import { useGetLocationTreeQuery } from '../store/api/locationApi';
+import { useGetBoundariesQuery } from '../store/api/boundaryApi';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/';
 
@@ -184,6 +186,105 @@ function UploadPanel({ projectId, categories }) {
   );
 }
 
+// ─── Area filter + boundary overlays ───────────────────────────
+// Assets are stamped with the zone/ward/locality they fall in at import time
+// (backend services/areaMatch.js), so the map can be narrowed to one area and
+// the boundaries themselves can be laid over the assets for context.
+//
+// Levels that hold nothing for this project are not rendered at all — an empty
+// "Locality" dropdown would imply the data is missing rather than optional.
+const OVERLAY_STYLES = {
+  zone: { label: 'Zones', color: '#f59e0b', level: 'ZONE' },
+  ward: { label: 'Wards', color: '#38bdf8', level: 'WARD' },
+  locality: { label: 'Localities', color: '#f472b6', level: 'LOCALITY' },
+};
+
+function AreaFilterBar({ area, setArea, zones, wards, localities, overlays, setOverlays, resultNote }) {
+  // Picking a coarser level clears everything below it, or the map would show
+  // "Zone 2 + a ward from Zone 4" and return nothing.
+  const pick = (level) => (e) => {
+    const value = e.target.value;
+    setArea((prev) => ({
+      ...prev,
+      ...(level === 'zone_id' ? { zone_id: value, ward_id: '', locality_id: '' } : {}),
+      ...(level === 'ward_id' ? { ward_id: value, locality_id: '' } : {}),
+      ...(level === 'locality_id' ? { locality_id: value } : {}),
+    }));
+  };
+
+  const toggleOverlay = (key) =>
+    setOverlays((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const active = Boolean(area.zone_id || area.ward_id || area.locality_id);
+  const select =
+    'text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 focus:ring-2 focus:ring-blue-500 outline-none';
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
+      <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-700 dark:text-gray-200">
+        <Filter className="w-4 h-4 text-gray-400" /> Area
+      </span>
+
+      {zones.length > 0 && (
+        <select value={area.zone_id} onChange={pick('zone_id')} className={select}>
+          <option value="">All zones</option>
+          {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+        </select>
+      )}
+      {wards.length > 0 && (
+        <select value={area.ward_id} onChange={pick('ward_id')} className={select}>
+          <option value="">All wards</option>
+          {wards.map((w) => (
+            <option key={w.id} value={w.id}>{w.ward_name || `Ward ${w.ward_number}`}</option>
+          ))}
+        </select>
+      )}
+      {localities.length > 0 && (
+        <select value={area.locality_id} onChange={pick('locality_id')} className={select}>
+          <option value="">All localities</option>
+          {localities.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      )}
+      {zones.length === 0 && wards.length === 0 && (
+        <span className="text-sm text-gray-400 dark:text-gray-500">
+          No zones or wards under this project's ULB yet.
+        </span>
+      )}
+
+      {active && (
+        <button
+          onClick={() => setArea({ zone_id: '', ward_id: '', locality_id: '' })}
+          className="text-sm flex items-center gap-1 px-2 py-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50"
+        >
+          <X className="w-3.5 h-3.5" /> Clear
+        </button>
+      )}
+
+      <div className="flex items-center gap-3 ml-auto">
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Show boundaries</span>
+        {Object.entries(OVERLAY_STYLES).map(([key, cfg]) => (
+          <label key={key} className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={overlays[key]}
+              onChange={() => toggleOverlay(key)}
+              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="inline-block w-4 h-0 border-t-2 border-dashed" style={{ borderColor: cfg.color }} />
+            {cfg.label}
+          </label>
+        ))}
+      </div>
+
+      {resultNote && (
+        <p className="w-full text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700 pt-2">
+          {resultNote}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Edit/delete a single staged feature ────────────────────────
 // Properties returned by the API are the raw imported dbf/GeoJSON fields
 // merged with these system columns — keep the editable field list to just
@@ -280,13 +381,29 @@ function EditFeatureModal({ feature, onClose }) {
 export default function ProjectDetailPage() {
   const { id } = useParams();
   const { data: projectRes } = useGetProjectQuery(id);
-  const { data: summaryRes } = useGetProjectSummaryQuery(id);
+  // One zone/ward/locality selection drives the published map, the staged
+  // batch being reviewed, and the totals — so what's counted is always what's
+  // drawn. Empty string means "no filter at this level".
+  const [area, setArea] = useState({ zone_id: '', ward_id: '', locality_id: '' });
+  const areaParams = useMemo(
+    () => Object.fromEntries(Object.entries(area).filter(([, v]) => v)),
+    [area]
+  );
+
+  const { data: summaryRes } = useGetProjectSummaryQuery({ id, ...areaParams });
   const { data: catRes } = useGetCategoriesQuery();
-  const { data: mapRes, isFetching: mapLoading } = useGetAssetMapQuery({ projectId: id, status: 'PUBLISHED' });
+  const { data: mapRes, isFetching: mapLoading } = useGetAssetMapQuery({
+    projectId: id,
+    status: 'PUBLISHED',
+    ...areaParams,
+  });
   const { data: uploadsRes } = useGetUploadsQuery(id);
 
   const [reviewUploadId, setReviewUploadId] = useState(null);
-  const { data: reviewFeatRes } = useGetUploadFeaturesQuery(reviewUploadId, { skip: !reviewUploadId });
+  const { data: reviewFeatRes } = useGetUploadFeaturesQuery(
+    { uploadId: reviewUploadId, ...areaParams },
+    { skip: !reviewUploadId }
+  );
   const mapSectionRef = useRef(null);
 
   const toggleReview = (uploadId) => {
@@ -317,6 +434,79 @@ export default function ProjectDetailPage() {
   };
 
   const project = projectRes?.data;
+
+  // Areas available to filter by: everything under this project's ULB. The
+  // ward list narrows to the chosen zone and localities to the chosen ward, so
+  // the three dropdowns can't be set to a combination that holds nothing.
+  const { data: treeRes } = useGetLocationTreeQuery();
+  const { zones, wards, localities } = useMemo(() => {
+    const t = treeRes?.data || {};
+    const ulbId = project?.ulb_id;
+    const z = (t.zones || []).filter((r) => !ulbId || String(r.ulb_id) === String(ulbId));
+    let w = (t.wards || []).filter((r) => !ulbId || String(r.ulb_id) === String(ulbId));
+    if (area.zone_id) w = w.filter((r) => String(r.zone_id) === String(area.zone_id));
+    const wardIds = new Set(w.map((r) => String(r.id)));
+    let l = (t.localities || []).filter((r) => wardIds.has(String(r.ward_id)));
+    if (area.ward_id) l = l.filter((r) => String(r.ward_id) === String(area.ward_id));
+    return { zones: z, wards: w, localities: l };
+  }, [treeRes, project?.ulb_id, area.zone_id, area.ward_id]);
+
+  // Boundary overlays are fetched only while switched on — a locality layer is
+  // 43 polygons this page has no reason to carry otherwise.
+  const [overlays, setOverlays] = useState({ zone: false, ward: false, locality: false });
+  const ulbId = project?.ulb_id;
+  const { data: zoneBounds } = useGetBoundariesQuery(
+    { level: 'ZONE', parentId: ulbId },
+    { skip: !overlays.zone || !ulbId }
+  );
+  const { data: wardBounds } = useGetBoundariesQuery(
+    { level: 'WARD', parentId: ulbId },
+    { skip: !overlays.ward || !ulbId }
+  );
+  const { data: localityBounds } = useGetBoundariesQuery(
+    // Localities hang off a ward, so they can only be parent-scoped once one
+    // is chosen; otherwise take them all and filter to this ULB's wards below.
+    { level: 'LOCALITY', parentId: area.ward_id || undefined },
+    { skip: !overlays.locality }
+  );
+
+  const mapOverlays = useMemo(() => {
+    const out = [];
+    const add = (key, res, keep) => {
+      if (!overlays[key] || !res?.features) return;
+      const features = keep ? res.features.filter(keep) : res.features;
+      if (features.length) {
+        out.push({
+          id: key,
+          name: OVERLAY_STYLES[key].label,
+          color: OVERLAY_STYLES[key].color,
+          geojson: { type: 'FeatureCollection', features },
+        });
+      }
+    };
+    // When a level is filtered, show only that area's outline — the point of
+    // the overlay is to frame what's on screen.
+    add('zone', zoneBounds, area.zone_id ? (f) => String(f.id) === String(area.zone_id) : null);
+    add('ward', wardBounds, area.ward_id
+      ? (f) => String(f.id) === String(area.ward_id)
+      : (f) => wards.some((w) => String(w.id) === String(f.id)));
+    add('locality', localityBounds, area.locality_id
+      ? (f) => String(f.id) === String(area.locality_id)
+      : (f) => localities.some((l) => String(l.id) === String(f.id)));
+    return out;
+  }, [overlays, zoneBounds, wardBounds, localityBounds, area, wards, localities]);
+
+  const areaLabel = useMemo(() => {
+    const parts = [];
+    const z = zones.find((r) => String(r.id) === String(area.zone_id));
+    const w = wards.find((r) => String(r.id) === String(area.ward_id));
+    const l = localities.find((r) => String(r.id) === String(area.locality_id));
+    if (z) parts.push(z.name);
+    if (w) parts.push(w.ward_name || `Ward ${w.ward_number}`);
+    if (l) parts.push(l.name);
+    return parts.join(' › ');
+  }, [area, zones, wards, localities]);
+
   const totals = summaryRes?.data?.totals || { features: 0, length_m: 0, published: 0, flagged: 0 };
   const byLayer = summaryRes?.data?.by_layer || [];
 
@@ -435,7 +625,20 @@ export default function ProjectDetailPage() {
       </header>
 
       <div className="p-6 space-y-6">
-        {/* Summary tiles — each headline number names the layers behind it. */}
+        {/* Summary tiles — each headline number names the layers behind it,
+            and counts only the filtered area when one is chosen. */}
+        {areaLabel && (
+          <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 rounded-lg px-3 py-2">
+            <Filter className="w-4 h-4" />
+            Totals below are for <b>{areaLabel}</b> only.
+            <button
+              onClick={() => setArea({ zone_id: '', ward_id: '', locality_id: '' })}
+              className="ml-auto text-xs font-semibold hover:underline"
+            >
+              Show whole project
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatTile
             icon={Layers}
@@ -547,15 +750,43 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
+            {/* Same filter for staged review and published assets — a batch is
+                reviewed ward by ward with the same control that narrows the
+                live map. */}
+            <AreaFilterBar
+              area={area}
+              setArea={setArea}
+              zones={zones}
+              wards={wards}
+              localities={localities}
+              overlays={overlays}
+              setOverlays={setOverlays}
+              resultNote={
+                reviewUploadId
+                  ? `Reviewing batch #${reviewUploadId}: showing ${reviewFeatRes?.count ?? '…'}` +
+                    `${reviewFeatRes?.areas?.total ? ` of ${reviewFeatRes.areas.total}` : ''} staged feature(s)` +
+                    `${areaLabel ? ` in ${areaLabel}` : ''}` +
+                    `${reviewFeatRes?.areas?.unmatched
+                      ? ` · ${reviewFeatRes.areas.unmatched} in this batch fall outside every ward boundary`
+                      : ''}`
+                  : areaLabel
+                  ? `Published assets in ${areaLabel}: ${totals.published} live of ${totals.features} feature(s).`
+                  : null
+              }
+            />
+
             <AssetLayerMap
               key={reviewUploadId ? `review-${reviewUploadId}` : 'published'}
               layers={reviewUploadId ? reviewLayers : (mapRes?.layers || [])}
+              overlays={mapOverlays}
               height={reviewUploadId ? 460 : 520}
               emptyText={
                 reviewUploadId
                   ? 'Loading staged features…'
                   : mapLoading
                   ? 'Loading map…'
+                  : areaLabel
+                  ? `No published assets in ${areaLabel}.`
                   : 'No published assets yet. Upload a shapefile and publish it.'
               }
               editable={!!reviewUploadId}
