@@ -5,6 +5,7 @@ import {
   Map as MapIcon, Network, CornerDownLeft,
 } from 'lucide-react';
 import { useGetLocationTreeQuery } from '../store/api/locationApi';
+import Spinner from '../components/Spinner';
 
 // Read-only mindmap of the administrative hierarchy:
 //   State → District → [ULB, City] → [Zone] → Ward → Locality
@@ -431,7 +432,11 @@ export default function LocationManagerPage() {
       </header>
 
       <div className="p-6">
-        {isLoading && <p className="text-gray-500 dark:text-gray-400">Loading hierarchy…</p>}
+        {isLoading && (
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 py-16 text-center">
+            <Spinner className="w-6 h-6" label="Loading hierarchy…" />
+          </div>
+        )}
         {isError && (
           <p className="text-red-600 dark:text-red-400">Failed to load locations. Is the backend running?</p>
         )}

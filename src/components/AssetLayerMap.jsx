@@ -3,6 +3,7 @@ import { MapContainer, GeoJSON, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import SatelliteTiles from './SatelliteTiles';
+import { LoadingOverlay } from './Spinner';
 
 // Fit the map to all currently-visible features whenever they change.
 function FitBounds({ layers }) {
@@ -126,10 +127,16 @@ function onEachFeature(layer, { onEdit, onDelete, onSelect } = {}) {
  * @param {Array} overlays  Administrative boundaries drawn UNDER the assets as
  *        outlines only: [{ id, name, color, geojson }]. Toggled by the caller,
  *        never clickable — they are context for the assets, not data to edit.
+ * @param {boolean} loading  A fetch is in flight. With nothing drawn yet this
+ *        covers the map; with features already on screen it shows a corner
+ *        chip so the map stays readable and pannable while it updates.
+ * @param {string} loadingText  What is being waited for, e.g. 'Applying filter…'.
  */
 export default function AssetLayerMap({
   layers = [],
   overlays = [],
+  loading = false,
+  loadingText = 'Loading…',
   height = 520,
   emptyText = 'No features to display.',
   editable = false,
@@ -247,7 +254,9 @@ export default function AssetLayerMap({
           ))}
         </MapContainer>
 
-        {totalFeatures === 0 && (
+        {loading && <LoadingOverlay label={loadingText} subtle={totalFeatures > 0} />}
+
+        {totalFeatures === 0 && !loading && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="text-gray-500 dark:text-gray-300 bg-white/80 dark:bg-gray-800/80 px-3 py-1 rounded">{emptyText}</span>
           </div>

@@ -3,6 +3,7 @@ import { ClipboardList, MapPin, User, Calendar, Flag, Home, Image as ImageIcon, 
 import toast from 'react-hot-toast';
 import AssetLayerMap from '../components/AssetLayerMap';
 import TaxBreakdown from '../components/TaxBreakdown';
+import Spinner from '../components/Spinner';
 import {
   useGetProjectsQuery,
   useGetAssetMapQuery,
@@ -691,6 +692,8 @@ export default function SurveyedDataPage() {
               layers={shown}
               height={480}
               colorBySurvey
+              loading={isFetching}
+              loadingText="Loading survey progress…"
               selectedFeatureId={selected?.properties?.id ?? null}
               onSelectFeature={(f) => setSelected(f)}
               emptyText="No assets of this type in this project."
@@ -713,6 +716,21 @@ export default function SurveyedDataPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* A project's assets can run to tens of thousands of features, so the
+            gap between picking one and the asset-type list filling in is long
+            enough to look broken without this. */}
+        {projectId && isFetching && !layer && (
+          <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+            <Spinner className="w-6 h-6" label="Loading this project's assets…" />
+          </div>
+        )}
+
+        {projectId && !isFetching && !layer && allLayers.length > 0 && (
+          <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-xl border border-dashed border-gray-300 dark:border-gray-600">
+            <p className="text-gray-600 dark:text-gray-300 font-medium">Pick an asset type to see its survey progress</p>
+          </div>
         )}
 
         {!projectId && (

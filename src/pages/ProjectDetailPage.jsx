@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, Upload, FileText, CheckCircle2, XCircle, Trash2, Eye, X,
-  Layers, Ruler, Flag, Database, MapPin, Filter,
+  Layers, Ruler, Flag, Database, MapPin, Filter, Loader2,
 } from 'lucide-react';
+import Spinner, { Skeleton } from '../components/Spinner';
 import toast from 'react-hot-toast';
 import AssetLayerMap from '../components/AssetLayerMap';
 import {
@@ -40,7 +41,7 @@ const fmtLen = (m) => (!m ? '—' : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : 
 // make up the number, biggest first.
 const BREAKDOWN_ROWS = 3;
 
-function StatTile({ icon: Icon, label, value, color, breakdown = [], note, empty }) {
+function StatTile({ icon: Icon, label, value, color, breakdown = [], note, empty, loading = false, ready = true }) {
   const top = breakdown.slice(0, BREAKDOWN_ROWS);
   const rest = breakdown.length - top.length;
 
@@ -48,8 +49,20 @@ function StatTile({ icon: Icon, label, value, color, breakdown = [], note, empty
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
       <div className="flex items-start justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+            {label}
+            {loading && <Spinner className="w-3 h-3" />}
+          </p>
+          {/* First load shows a placeholder; a re-fetch keeps the old number
+              readable but dimmed, so it's clear it's about to change rather
+              than the tile flashing empty. */}
+          {ready ? (
+            <p className={`text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1 transition-opacity ${loading ? 'opacity-50' : ''}`}>
+              {value}
+            </p>
+          ) : (
+            <span className="block mt-2"><Skeleton className="h-6 w-20" /></span>
+          )}
         </div>
         <Icon className={`w-9 h-9 ${color} opacity-30 flex-shrink-0`} />
       </div>
@@ -160,8 +173,9 @@ function UploadPanel({ projectId, categories }) {
       </div>
 
       <button type="submit" disabled={isLoading}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-900 text-white font-semibold py-2.5 rounded-lg transition">
-        {isLoading ? 'Uploading…' : 'Upload to staging'}
+        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-900 text-white font-semibold py-2.5 rounded-lg transition flex items-center justify-center gap-2">
+        {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+        {isLoading ? 'Uploading, parsing & matching areas…' : 'Upload to staging'}
       </button>
 
       {lastAreas && (
@@ -199,7 +213,10 @@ const OVERLAY_STYLES = {
   locality: { label: 'Localities', color: '#f472b6', level: 'LOCALITY' },
 };
 
-function AreaFilterBar({ area, setArea, zones, wards, localities, overlays, setOverlays, resultNote }) {
+function AreaFilterBar({
+  area, setArea, zones, wards, localities, overlays, setOverlays, resultNote,
+  busy = false, areasLoading = false, overlayLoading = {},
+}) {
   // Picking a coarser level clears everything below it, or the map would show
   // "Zone 2 + a ward from Zone 4" and return nothing.
   const pick = (level) => (e) => {
@@ -225,6 +242,10 @@ function AreaFilterBar({ area, setArea, zones, wards, localities, overlays, setO
         <Filter className="w-4 h-4 text-gray-400" /> Area
       </span>
 
+      {areasLoading && zones.length === 0 && wards.length === 0 && (
+        <Spinner label="Loading areas…" />
+      )}
+
       {zones.length > 0 && (
         <select value={area.zone_id} onChange={pick('zone_id')} className={select}>
           <option value="">All zones</option>
@@ -245,11 +266,16 @@ function AreaFilterBar({ area, setArea, zones, wards, localities, overlays, setO
           {localities.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </select>
       )}
-      {zones.length === 0 && wards.length === 0 && (
+      {!areasLoading && zones.length === 0 && wards.length === 0 && (
         <span className="text-sm text-gray-400 dark:text-gray-500">
           No zones or wards under this project's ULB yet.
         </span>
       )}
+
+      {/* The map, the totals and the staged batch all re-fetch on a filter
+          change — say so once here rather than leaving three panels to look
+          independently stuck. */}
+      {busy && <Spinner label="Applying filter…" />}
 
       {active && (
         <button
@@ -272,6 +298,9 @@ function AreaFilterBar({ area, setArea, zones, wards, localities, overlays, setO
             />
             <span className="inline-block w-4 h-0 border-t-2 border-dashed" style={{ borderColor: cfg.color }} />
             {cfg.label}
+            {/* Boundary polygons are fetched on toggle, so the checkbox ticks
+                before anything appears on the map. */}
+            {overlayLoading[key] && <Spinner className="w-3 h-3" />}
           </label>
         ))}
       </div>
@@ -390,17 +419,17 @@ export default function ProjectDetailPage() {
     [area]
   );
 
-  const { data: summaryRes } = useGetProjectSummaryQuery({ id, ...areaParams });
+  const { data: summaryRes, isFetching: summaryLoading } = useGetProjectSummaryQuery({ id, ...areaParams });
   const { data: catRes } = useGetCategoriesQuery();
   const { data: mapRes, isFetching: mapLoading } = useGetAssetMapQuery({
     projectId: id,
     status: 'PUBLISHED',
     ...areaParams,
   });
-  const { data: uploadsRes } = useGetUploadsQuery(id);
+  const { data: uploadsRes, isFetching: uploadsLoading } = useGetUploadsQuery(id);
 
   const [reviewUploadId, setReviewUploadId] = useState(null);
-  const { data: reviewFeatRes } = useGetUploadFeaturesQuery(
+  const { data: reviewFeatRes, isFetching: reviewLoading } = useGetUploadFeaturesQuery(
     { uploadId: reviewUploadId, ...areaParams },
     { skip: !reviewUploadId }
   );
@@ -438,7 +467,7 @@ export default function ProjectDetailPage() {
   // Areas available to filter by: everything under this project's ULB. The
   // ward list narrows to the chosen zone and localities to the chosen ward, so
   // the three dropdowns can't be set to a combination that holds nothing.
-  const { data: treeRes } = useGetLocationTreeQuery();
+  const { data: treeRes, isFetching: areasLoading } = useGetLocationTreeQuery();
   const { zones, wards, localities } = useMemo(() => {
     const t = treeRes?.data || {};
     const ulbId = project?.ulb_id;
@@ -455,15 +484,15 @@ export default function ProjectDetailPage() {
   // 43 polygons this page has no reason to carry otherwise.
   const [overlays, setOverlays] = useState({ zone: false, ward: false, locality: false });
   const ulbId = project?.ulb_id;
-  const { data: zoneBounds } = useGetBoundariesQuery(
+  const { data: zoneBounds, isFetching: zoneBoundsLoading } = useGetBoundariesQuery(
     { level: 'ZONE', parentId: ulbId },
     { skip: !overlays.zone || !ulbId }
   );
-  const { data: wardBounds } = useGetBoundariesQuery(
+  const { data: wardBounds, isFetching: wardBoundsLoading } = useGetBoundariesQuery(
     { level: 'WARD', parentId: ulbId },
     { skip: !overlays.ward || !ulbId }
   );
-  const { data: localityBounds } = useGetBoundariesQuery(
+  const { data: localityBounds, isFetching: localityBoundsLoading } = useGetBoundariesQuery(
     // Localities hang off a ward, so they can only be parent-scoped once one
     // is chosen; otherwise take them all and filter to this ULB's wards below.
     { level: 'LOCALITY', parentId: area.ward_id || undefined },
@@ -507,6 +536,9 @@ export default function ProjectDetailPage() {
     return parts.join(' › ');
   }, [area, zones, wards, localities]);
 
+  // Distinguishes "still arriving" from "arrived and it's zero" — a tile
+  // showing a confident 0 during the first load is a lie.
+  const summaryReady = Boolean(summaryRes?.data);
   const totals = summaryRes?.data?.totals || { features: 0, length_m: 0, published: 0, flagged: 0 };
   const byLayer = summaryRes?.data?.by_layer || [];
 
@@ -645,6 +677,8 @@ export default function ProjectDetailPage() {
             label="Total features"
             value={totals.features}
             color="text-blue-500"
+            loading={summaryLoading}
+            ready={summaryReady}
             note={activeLayers.length ? `across ${activeLayers.length} layer${activeLayers.length === 1 ? '' : 's'}` : 'No assets yet'}
           />
           <StatTile
@@ -652,6 +686,8 @@ export default function ProjectDetailPage() {
             label="Network length"
             value={fmtLen(totals.length_m)}
             color="text-emerald-500"
+            loading={summaryLoading}
+            ready={summaryReady}
             breakdown={lengthByLayer}
             empty="No line assets yet"
           />
@@ -660,6 +696,8 @@ export default function ProjectDetailPage() {
             label="Published (live)"
             value={totals.published}
             color="text-green-500"
+            loading={summaryLoading}
+            ready={summaryReady}
             breakdown={publishedByLayer}
             empty="Nothing published yet"
           />
@@ -668,6 +706,8 @@ export default function ProjectDetailPage() {
             label="Flagged"
             value={totals.flagged}
             color="text-red-500"
+            loading={summaryLoading}
+            ready={summaryReady}
             breakdown={flaggedByLayer}
             empty="Nothing flagged"
           />
@@ -682,6 +722,7 @@ export default function ProjectDetailPage() {
               <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
                 <Database className="w-5 h-5 text-gray-500 dark:text-gray-400" />
                 <h3 className="font-bold text-gray-900 dark:text-gray-100">Uploads ({uploads.length})</h3>
+                {uploadsLoading && <Spinner className="w-3.5 h-3.5" />}
               </div>
               <div className="divide-y divide-gray-200 dark:divide-gray-700 max-h-[420px] overflow-y-auto">
                 {uploads.length === 0 && <p className="px-5 py-6 text-sm text-gray-400 dark:text-gray-500">No uploads yet.</p>}
@@ -761,6 +802,13 @@ export default function ProjectDetailPage() {
               localities={localities}
               overlays={overlays}
               setOverlays={setOverlays}
+              areasLoading={areasLoading}
+              busy={mapLoading || summaryLoading || reviewLoading}
+              overlayLoading={{
+                zone: zoneBoundsLoading,
+                ward: wardBoundsLoading,
+                locality: localityBoundsLoading,
+              }}
               resultNote={
                 reviewUploadId
                   ? `Reviewing batch #${reviewUploadId}: showing ${reviewFeatRes?.count ?? '…'}` +
@@ -779,12 +827,18 @@ export default function ProjectDetailPage() {
               key={reviewUploadId ? `review-${reviewUploadId}` : 'published'}
               layers={reviewUploadId ? reviewLayers : (mapRes?.layers || [])}
               overlays={mapOverlays}
+              loading={reviewUploadId ? reviewLoading : mapLoading}
+              loadingText={
+                areaLabel
+                  ? `Loading ${areaLabel}…`
+                  : reviewUploadId
+                  ? 'Loading staged features…'
+                  : 'Loading assets…'
+              }
               height={reviewUploadId ? 460 : 520}
               emptyText={
                 reviewUploadId
-                  ? 'Loading staged features…'
-                  : mapLoading
-                  ? 'Loading map…'
+                  ? 'No staged features to show.'
                   : areaLabel
                   ? `No published assets in ${areaLabel}.`
                   : 'No published assets yet. Upload a shapefile and publish it.'
@@ -796,10 +850,14 @@ export default function ProjectDetailPage() {
 
             {/* Inventory by layer */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700">
+              <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
                 <h3 className="font-bold text-gray-900 dark:text-gray-100">Inventory by layer</h3>
+                {areaLabel && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">· {areaLabel}</span>
+                )}
+                {summaryLoading && <Spinner className="w-3.5 h-3.5" />}
               </div>
-              <div className="overflow-x-auto">
+              <div className={`overflow-x-auto transition-opacity ${summaryLoading ? 'opacity-50' : ''}`}>
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 dark:bg-gray-900/60 text-gray-500 dark:text-gray-400 text-xs uppercase">
                     <tr>
@@ -823,7 +881,17 @@ export default function ProjectDetailPage() {
                       </tr>
                     ))}
                     {byLayer.filter((r) => Number(r.feature_count) > 0).length === 0 && (
-                      <tr><td colSpan={6} className="px-5 py-6 text-center text-gray-400 dark:text-gray-500">No assets yet.</td></tr>
+                      <tr>
+                        <td colSpan={6} className="px-5 py-6 text-center text-gray-400 dark:text-gray-500">
+                          {!summaryReady ? (
+                            <Spinner label="Loading inventory…" />
+                          ) : areaLabel ? (
+                            `No assets in ${areaLabel}.`
+                          ) : (
+                            'No assets yet.'
+                          )}
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
