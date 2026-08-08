@@ -76,7 +76,7 @@ export default function AdminSidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2">
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar p-4 space-y-2">
           {menuItems.map((item) => {
             const Icon = item.icon;
             const isActive = item.exact

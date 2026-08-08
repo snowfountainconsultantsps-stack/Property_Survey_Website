@@ -121,3 +121,13 @@
     @apply bg-background text-foreground;
   }
 }
+/* Hide the scrollbar but keep the element scrollable — used by the admin
+   sidebar, where a visible track fights the collapse/expand animation on a
+   rail that is only 80px wide. Content stays reachable on short screens. */
+.no-scrollbar {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;                  /* Chrome, Safari */
+}

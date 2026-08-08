@@ -1,4 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import { locationApi } from './locationApi';
 
 // ──────────────────────────────────────────────────────────────
 // boundaryApi — location-hierarchy (State/District/City/Ward) boundary
@@ -30,6 +31,13 @@ export const boundaryApi = createApi({
         body: formData,
       }),
       invalidatesTags: ['Boundaries'],
+      // Keep the location tree in step for the same cross-slice reason.
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(locationApi.util.invalidateTags(['Locations']));
+        } catch { /* nothing changed */ }
+      },
     }),
     // formData: FormData with fields file, match_field, shapefile_field (+ optional parent_id)
     bulkUploadBoundaries: builder.mutation({
@@ -59,6 +67,18 @@ export const boundaryApi = createApi({
         body: formData,
       }),
       invalidatesTags: ['Boundaries'],
+      // Publishing also CREATES location rows, which live in locationApi — a
+      // separate slice, so `invalidatesTags` above can't reach it. Without
+      // this the new rows (and their "Published" badges) stay stale until a
+      // manual reload.
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(locationApi.util.invalidateTags(['Locations']));
+        } catch {
+          // Failed publish changes nothing, so there is nothing to refresh.
+        }
+      },
     }),
   }),
 });
