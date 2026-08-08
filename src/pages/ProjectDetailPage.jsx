@@ -82,11 +82,15 @@ function StatTile({ icon: Icon, label, value, color, breakdown = [], note, empty
               +{rest} more layer{rest === 1 ? '' : 's'}
             </li>
           )}
+          {note && <li className="text-[11px] text-gray-400 dark:text-gray-500 pt-0.5">{note}</li>}
         </ul>
       ) : (
+        // With nothing to break down, the note still has to say which assets
+        // were looked at — "no line assets" alone reads as missing data rather
+        // than "the only layer here is polygons".
         (note || empty) && (
           <p className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700/60 text-xs text-gray-400 dark:text-gray-500">
-            {note || empty}
+            {empty || note}
           </p>
         )
       )}
@@ -579,7 +583,7 @@ export default function ProjectDetailPage() {
   // Which layers actually contribute to each headline number, biggest first.
   // A layer holding nothing is noise on a tile, so it's dropped rather than
   // listed as a zero.
-  const { activeLayers, lengthByLayer, publishedByLayer, flaggedByLayer } = useMemo(() => {
+  const { activeLayers, uploadedByLayer, lengthByLayer, publishedByLayer, flaggedByLayer } = useMemo(() => {
     const rows = (summaryRes?.data?.by_layer || []).filter((r) => Number(r.feature_count) > 0);
     const contributors = (valueOf, format) =>
       rows
@@ -590,11 +594,24 @@ export default function ProjectDetailPage() {
 
     return {
       activeLayers: rows,
+      uploadedByLayer: contributors((r) => r.feature_count, (n) => n.toLocaleString()),
       lengthByLayer: contributors((r) => r.total_length_m, fmtLen),
-      publishedByLayer: contributors((r) => r.published, String),
-      flaggedByLayer: contributors((r) => r.flagged, String),
+      publishedByLayer: contributors((r) => r.published, (n) => n.toLocaleString()),
+      flaggedByLayer: contributors((r) => r.flagged, (n) => n.toLocaleString()),
     };
   }, [summaryRes]);
+
+  // Which asset types were actually looked at, for the tiles that come back
+  // empty — "nothing flagged" means little without saying flagged in what.
+  const layerSummary = useMemo(() => {
+    const names = activeLayers.map((r) => r.layer_name);
+    const list = names.length <= 2 ? names.join(' & ') : `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+    const lineLayers = activeLayers.filter((r) => r.geometry_type === 'LINESTRING');
+    const geomNote = activeLayers.length === 1
+      ? `${activeLayers[0].layer_name} is ${String(activeLayers[0].geometry_type).toLowerCase()}`
+      : `no line assets among ${list}`;
+    return { names, list, hasLines: lineLayers.length > 0, geomNote, any: names.length > 0 };
+  }, [activeLayers]);
   const categories = catRes?.data || [];
   const uploads = uploadsRes?.data || [];
 
@@ -708,42 +725,44 @@ export default function ProjectDetailPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatTile
             icon={Layers}
-            label="Total features"
-            value={totals.features}
+            label={areaLabel ? 'Assets in this area' : 'Assets uploaded'}
+            value={totals.features.toLocaleString()}
             color="text-blue-500"
             loading={summaryLoading}
             ready={summaryReady}
-            note={activeLayers.length ? `across ${activeLayers.length} layer${activeLayers.length === 1 ? '' : 's'}` : 'No assets yet'}
+            breakdown={uploadedByLayer}
+            note={uploads.length ? `from ${uploads.length} upload${uploads.length === 1 ? '' : 's'}` : null}
+            empty="Nothing uploaded yet"
           />
           <StatTile
             icon={Ruler}
             label="Network length"
-            value={fmtLen(totals.length_m)}
+            value={layerSummary.hasLines ? fmtLen(totals.length_m) : '—'}
             color="text-emerald-500"
             loading={summaryLoading}
             ready={summaryReady}
             breakdown={lengthByLayer}
-            empty="No line assets yet"
+            empty={layerSummary.any ? `No length to measure — ${layerSummary.geomNote}` : 'No assets yet'}
           />
           <StatTile
             icon={CheckCircle2}
             label="Published (live)"
-            value={totals.published}
+            value={totals.published.toLocaleString()}
             color="text-green-500"
             loading={summaryLoading}
             ready={summaryReady}
             breakdown={publishedByLayer}
-            empty="Nothing published yet"
+            empty={layerSummary.any ? `Nothing published in ${layerSummary.list}` : 'No assets yet'}
           />
           <StatTile
             icon={Flag}
             label="Flagged"
-            value={totals.flagged}
+            value={totals.flagged.toLocaleString()}
             color="text-red-500"
             loading={summaryLoading}
             ready={summaryReady}
             breakdown={flaggedByLayer}
-            empty="Nothing flagged"
+            empty={layerSummary.any ? `None flagged in ${layerSummary.list}` : 'No assets yet'}
           />
         </div>
 
