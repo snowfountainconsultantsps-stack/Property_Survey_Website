@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { authApi, surveyApi, assetApi, boundaryApi, locationApi } from './api';
+import { authApi, surveyApi, assetApi, boundaryApi, locationApi, assignmentApi } from './api';
 import { authReducer } from './slices';
 
 export const store = configureStore({
@@ -14,6 +14,8 @@ export const store = configureStore({
     [boundaryApi.reducerPath]: boundaryApi.reducer,
     // Location hierarchy CRUD reducer
     [locationApi.reducerPath]: locationApi.reducer,
+    // Surveyor area assignments + performance
+    [assignmentApi.reducerPath]: assignmentApi.reducer,
     // Auth slice reducer
     auth: authReducer,
   },
@@ -25,5 +27,6 @@ export const store = configureStore({
       .concat(surveyApi.middleware)
       .concat(assetApi.middleware)
       .concat(boundaryApi.middleware)
-      .concat(locationApi.middleware),
+      .concat(locationApi.middleware)
+      .concat(assignmentApi.middleware),
 });

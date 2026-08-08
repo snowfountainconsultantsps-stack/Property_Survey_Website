@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAppDispatch } from '../store/hooks';
 import { useLogoutMutation } from '../store/api/authApi';
 import { clearAuth } from '../store/slices/authSlice';
-import { BarChart3, Users, Settings, LogOut, Menu, X, FolderKanban, Boxes, Map, Building2, Filter, ClipboardList } from 'lucide-react';
+import { BarChart3, Users, Settings, LogOut, Menu, X, FolderKanban, Boxes, Map, Building2, Filter, ClipboardList, Gauge } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useState } from 'react';
 import ThemeToggle from '../components/ThemeToggle';
@@ -40,6 +40,7 @@ export default function AdminSidebar() {
     { name: 'Boundaries', path: '/admin/boundaries', icon: Map },
     { name: 'Surveyed Data', path: '/admin/surveyed', icon: ClipboardList },
     { name: 'Asset Reports', path: '/admin/reports', icon: Filter },
+    { name: 'Performance', path: '/admin/performance', icon: Gauge },
     { name: 'Manage Users', path: '/admin/users', icon: Users },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
   ];

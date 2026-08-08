@@ -9,6 +9,7 @@ import LocationBoundariesPage from '../pages/LocationBoundariesPage';
 import LocationManagerPage from '../pages/LocationManagerPage';
 import AssetReportPage from '../pages/AssetReportPage';
 import SurveyedDataPage from '../pages/SurveyedDataPage';
+import SurveyorPerformancePage from '../pages/SurveyorPerformancePage';
 import GISTeamDashboard from '../pages/GISTeamDashboard';
 import PropertyTaxPage from '../pages/PropertyTaxPage';
 import Unauthorized from '../pages/Unauthorized';
@@ -73,6 +74,10 @@ export const router = createBrowserRouter([
       {
         path: 'surveyed',
         element: <SurveyedDataPage />,
+      },
+      {
+        path: 'performance',
+        element: <SurveyorPerformancePage />,
       },
     ],
   },

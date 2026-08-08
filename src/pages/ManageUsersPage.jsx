@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Users as UsersIcon, Plus, X, Trash2, CheckCircle2, XCircle } from 'lucide-react';
+import { Users as UsersIcon, Plus, X, Trash2, CheckCircle2, XCircle, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AssignAreaModal from '../components/AssignAreaModal';
 import {
   useGetAllUsersQuery,
   useCreateUserMutation,
@@ -91,6 +92,7 @@ export default function ManageUsersPage() {
   const [deleteUser] = useDeleteUserMutation();
   const [updateUserStatus] = useUpdateUserStatusMutation();
   const [showAdd, setShowAdd] = useState(false);
+  const [assigning, setAssigning] = useState(null); // the surveyor being allocated
   const [search, setSearch] = useState('');
 
   const users = (Array.isArray(data) ? data : data?.users || data?.data?.users || data?.data || [])
@@ -160,6 +162,7 @@ export default function ManageUsersPage() {
                   <th className="text-left px-3 py-3 font-medium">Phone</th>
                   <th className="text-left px-3 py-3 font-medium">Role</th>
                   <th className="text-left px-3 py-3 font-medium">Status</th>
+                  <th className="text-left px-5 py-3 font-medium">Allocation</th>
                   <th className="text-right px-5 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
@@ -184,6 +187,18 @@ export default function ManageUsersPage() {
                         {u.is_active ? 'Active' : 'Inactive'}
                       </button>
                     </td>
+                    <td className="px-5 py-3">
+                      {/* Only surveyors are area-scoped; other roles see
+                          everything, so allocation would be meaningless. */}
+                      {u.role === 'SURVEYOR' ? (
+                        <button onClick={() => setAssigning(u)}
+                          className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900">
+                          <MapPin className="w-3.5 h-3.5" /> Areas
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">All areas</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-right">
                       <button onClick={() => remove(u)}
                         className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900 ml-auto">
@@ -199,6 +214,7 @@ export default function ManageUsersPage() {
       </div>
 
       {showAdd && <AddUserModal onClose={() => setShowAdd(false)} />}
+      {assigning && <AssignAreaModal user={assigning} onClose={() => setAssigning(null)} />}
     </div>
   );
 }
