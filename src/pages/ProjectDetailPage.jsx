@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, Upload, FileText, CheckCircle2, XCircle, Trash2, Eye, X,
-  Layers, Ruler, Flag, Database,
+  Layers, Ruler, Flag, Database, MapPin,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AssetLayerMap from '../components/AssetLayerMap';
@@ -19,8 +19,8 @@ import {
   usePublishUploadMutation,
   useRejectUploadMutation,
   useDeleteUploadMutation,
+  useMatchUploadAreasMutation,
 } from '../store/api/assetApi';
-import { useGetWardsQuery } from '../store/api/surveyApi';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/';
 
@@ -33,14 +33,48 @@ const UPLOAD_STATUS = {
 
 const fmtLen = (m) => (!m ? '—' : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
 
-function StatTile({ icon: Icon, label, value, color }) {
+// A total on its own doesn't say much when a project holds sewer lines, water
+// mains and roads at once — 14 km of *what*? `breakdown` names the layers that
+// make up the number, biggest first.
+const BREAKDOWN_ROWS = 3;
+
+function StatTile({ icon: Icon, label, value, color, breakdown = [], note, empty }) {
+  const top = breakdown.slice(0, BREAKDOWN_ROWS);
+  const rest = breakdown.length - top.length;
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
-      <div>
-        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
-        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
+      <div className="flex items-start justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
+        </div>
+        <Icon className={`w-9 h-9 ${color} opacity-30 flex-shrink-0`} />
       </div>
-      <Icon className={`w-9 h-9 ${color} opacity-30`} />
+
+      {top.length > 0 ? (
+        <ul className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700/60 space-y-1">
+          {top.map((b) => (
+            <li key={b.key} className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="truncate text-gray-500 dark:text-gray-400" title={b.label}>{b.label}</span>
+              <span className="font-semibold text-gray-700 dark:text-gray-200 tabular-nums whitespace-nowrap">
+                {b.value}
+              </span>
+            </li>
+          ))}
+          {rest > 0 && (
+            <li className="text-[11px] text-gray-400 dark:text-gray-500">
+              +{rest} more layer{rest === 1 ? '' : 's'}
+            </li>
+          )}
+        </ul>
+      ) : (
+        (note || empty) && (
+          <p className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700/60 text-xs text-gray-400 dark:text-gray-500">
+            {note || empty}
+          </p>
+        )
+      )}
     </div>
   );
 }
@@ -49,11 +83,11 @@ function StatTile({ icon: Icon, label, value, color }) {
 function UploadPanel({ projectId, categories }) {
   const [layerId, setLayerId] = useState('');
   const [file, setFile] = useState(null);
-  const [wardId, setWardId] = useState('');
   const [notes, setNotes] = useState('');
+  // Last batch's area-match result, kept on screen after the toast fades —
+  // an unmatched count is the thing worth acting on.
+  const [lastAreas, setLastAreas] = useState(null);
   const [uploadAsset, { isLoading }] = useUploadAssetFileMutation();
-  const { data: wardsRes } = useGetWardsQuery();
-  const wards = wardsRes?.data || [];
 
   const submit = async (e) => {
     e.preventDefault();
@@ -63,17 +97,16 @@ function UploadPanel({ projectId, categories }) {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('project_id', String(projectId));
-    if (wardId) fd.append('ward_id', wardId);
     if (notes) fd.append('notes', notes);
 
     const t = toast.loading('Uploading & parsing…');
     try {
       const res = await uploadAsset({ layerId, formData: fd }).unwrap();
       toast.dismiss(t);
-      toast.success(res.message || `Staged ${res.data.staged} features`);
+      toast.success(`Staged ${res.data.staged} feature(s)`);
+      setLastAreas({ staged: res.data.staged, ...(res.data.areas || {}) });
       setFile(null);
       setNotes('');
-      setWardId('');
       e.target.reset();
     } catch (err) {
       toast.dismiss(t);
@@ -107,28 +140,45 @@ function UploadPanel({ projectId, categories }) {
           className="w-full text-sm text-gray-600 dark:text-gray-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 dark:file:bg-blue-950 file:text-blue-700 dark:file:text-blue-400 file:font-semibold hover:file:bg-blue-100 dark:hover:file:bg-blue-900" />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ward (optional)</label>
-          <select value={wardId} onChange={(e) => setWardId(e.target.value)}
-            className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
-            <option value="">No ward</option>
-            {wards.map((w) => (
-              <option key={w.id} value={w.id}>{w.ward_number ? `Ward ${w.ward_number}` : w.ward_name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notes (optional)</label>
-          <input value={notes} onChange={(e) => setNotes(e.target.value)}
-            className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="source / date" />
-        </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notes (optional)</label>
+        <input value={notes} onChange={(e) => setNotes(e.target.value)}
+          className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="source / date" />
+      </div>
+
+      {/* No ward picker: one ward for a file that spans the whole ULB was wrong
+          for most of it, and a missing ward hid the features from every
+          surveyor allocation. */}
+      <div className="flex items-start gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 px-3 py-2">
+        <MapPin className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-blue-800 dark:text-blue-300">
+          Zone, ward and locality are matched from each feature's own geometry against this project's
+          boundaries — so a file covering the whole ULB files itself correctly, ward by ward.
+        </p>
       </div>
 
       <button type="submit" disabled={isLoading}
         className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-900 text-white font-semibold py-2.5 rounded-lg transition">
         {isLoading ? 'Uploading…' : 'Upload to staging'}
       </button>
+
+      {lastAreas && (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs space-y-1">
+          <p className="font-semibold text-gray-700 dark:text-gray-200">Last batch: {lastAreas.staged} staged</p>
+          <p className="text-gray-500 dark:text-gray-400">
+            {lastAreas.matched || 0} matched to {lastAreas.wards_touched || 0} ward(s)
+            {lastAreas.zones_touched ? `, ${lastAreas.zones_touched} zone(s)` : ''}
+            {lastAreas.localities_touched ? `, ${lastAreas.localities_touched} locality(ies)` : ''}
+          </p>
+          {lastAreas.unmatched > 0 && (
+            <p className="text-amber-600 dark:text-amber-400">
+              {lastAreas.unmatched} fell outside every ward boundary — they'll be missing from ward
+              filters and surveyor allocations until the covering boundaries are imported.
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="text-xs text-gray-400 dark:text-gray-500">Imported features are staged for review, then you publish them to make them live for surveyors.</p>
     </form>
   );
@@ -139,8 +189,8 @@ function UploadPanel({ projectId, categories }) {
 // merged with these system columns — keep the editable field list to just
 // the raw ones.
 const FEATURE_SYSTEM_KEYS = [
-  'id', 'layer_id', 'project_id', 'ward_id', 'polygon_id', 'feature_code',
-  'source', 'status', 'length_m', 'area_sqm', 'upload_id',
+  'id', 'layer_id', 'project_id', 'zone_id', 'ward_id', 'locality_id', 'polygon_id',
+  'feature_code', 'source', 'status', 'length_m', 'area_sqm', 'upload_id',
 ];
 
 function EditFeatureModal({ feature, onClose }) {
@@ -252,6 +302,7 @@ export default function ProjectDetailPage() {
   const [publishUpload] = usePublishUploadMutation();
   const [rejectUpload] = useRejectUploadMutation();
   const [deleteUpload] = useDeleteUploadMutation();
+  const [matchUploadAreas] = useMatchUploadAreasMutation();
   const [deleteFeature] = useDeleteFeatureMutation();
   const [editingFeature, setEditingFeature] = useState(null);
 
@@ -268,6 +319,26 @@ export default function ProjectDetailPage() {
   const project = projectRes?.data;
   const totals = summaryRes?.data?.totals || { features: 0, length_m: 0, published: 0, flagged: 0 };
   const byLayer = summaryRes?.data?.by_layer || [];
+
+  // Which layers actually contribute to each headline number, biggest first.
+  // A layer holding nothing is noise on a tile, so it's dropped rather than
+  // listed as a zero.
+  const { activeLayers, lengthByLayer, publishedByLayer, flaggedByLayer } = useMemo(() => {
+    const rows = (summaryRes?.data?.by_layer || []).filter((r) => Number(r.feature_count) > 0);
+    const contributors = (valueOf, format) =>
+      rows
+        .map((r) => ({ key: r.layer_id, label: r.layer_name, raw: Number(valueOf(r) || 0) }))
+        .filter((r) => r.raw > 0)
+        .sort((a, b) => b.raw - a.raw)
+        .map((r) => ({ ...r, value: format(r.raw) }));
+
+    return {
+      activeLayers: rows,
+      lengthByLayer: contributors((r) => r.total_length_m, fmtLen),
+      publishedByLayer: contributors((r) => r.published, String),
+      flaggedByLayer: contributors((r) => r.flagged, String),
+    };
+  }, [summaryRes]);
   const categories = catRes?.data || [];
   const uploads = uploadsRes?.data || [];
 
@@ -316,6 +387,20 @@ export default function ProjectDetailPage() {
     }
   };
 
+  // The server's own summary is the useful message here ("8/10 now carry a
+  // ward…"), so it's shown rather than a generic success line.
+  const rematch = (uploadId) => async () => {
+    const t = toast.loading('Matching areas…');
+    try {
+      const res = await matchUploadAreas(uploadId).unwrap();
+      toast.dismiss(t);
+      toast.success(res.message || 'Areas re-matched');
+    } catch (err) {
+      toast.dismiss(t);
+      toast.error(err?.data?.message || 'Could not match areas');
+    }
+  };
+
   const act = (fn, uploadId, ok, opts = {}) => async () => {
     try {
       await fn(uploadId).unwrap();
@@ -350,12 +435,39 @@ export default function ProjectDetailPage() {
       </header>
 
       <div className="p-6 space-y-6">
-        {/* Summary tiles */}
+        {/* Summary tiles — each headline number names the layers behind it. */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatTile icon={Layers} label="Total features" value={totals.features} color="text-blue-500" />
-          <StatTile icon={Ruler} label="Network length" value={fmtLen(totals.length_m)} color="text-emerald-500" />
-          <StatTile icon={CheckCircle2} label="Published (live)" value={totals.published} color="text-green-500" />
-          <StatTile icon={Flag} label="Flagged" value={totals.flagged} color="text-red-500" />
+          <StatTile
+            icon={Layers}
+            label="Total features"
+            value={totals.features}
+            color="text-blue-500"
+            note={activeLayers.length ? `across ${activeLayers.length} layer${activeLayers.length === 1 ? '' : 's'}` : 'No assets yet'}
+          />
+          <StatTile
+            icon={Ruler}
+            label="Network length"
+            value={fmtLen(totals.length_m)}
+            color="text-emerald-500"
+            breakdown={lengthByLayer}
+            empty="No line assets yet"
+          />
+          <StatTile
+            icon={CheckCircle2}
+            label="Published (live)"
+            value={totals.published}
+            color="text-green-500"
+            breakdown={publishedByLayer}
+            empty="Nothing published yet"
+          />
+          <StatTile
+            icon={Flag}
+            label="Flagged"
+            value={totals.flagged}
+            color="text-red-500"
+            breakdown={flaggedByLayer}
+            empty="Nothing flagged"
+          />
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -398,6 +510,13 @@ export default function ProjectDetailPage() {
                           </button>
                         </>
                       )}
+                      {/* Fills in zone/ward/locality for a batch imported
+                          before the covering boundaries existed. */}
+                      <button onClick={rematch(u.id)}
+                        title="Re-match zone / ward / locality from each feature's geometry"
+                        className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900">
+                        <MapPin className="w-3.5 h-3.5" /> Re-match areas
+                      </button>
                       {u.status !== 'PUBLISHED' && (
                         <button onClick={act(deleteUpload, u.id, 'Upload deleted')}
                           className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900">

@@ -125,7 +125,8 @@ export const assetApi = createApi({
       invalidatesTags: ['Features', 'Summary'],
     }),
     // Multipart: pass { layerId, formData } where formData is a FormData with
-    // fields file, project_id (+ optional ward_id, notes).
+    // fields file, project_id (+ optional notes). Zone/ward/locality are
+    // matched from each feature's geometry server-side, not sent from here.
     uploadAssetFile: builder.mutation({
       query: ({ layerId, formData }) => ({
         url: `assets/layers/${layerId}/uploads`,
@@ -134,14 +135,21 @@ export const assetApi = createApi({
       }),
       invalidatesTags: ['Uploads', 'Summary'],
     }),
-    // Multipart: formData with fields file, project_id, ward_id (required).
-    // Creates Polygon (parcel) records — separate from the layer upload above.
+    // Multipart: formData with fields file, project_id. Creates Polygon
+    // (parcel) records — separate from the layer upload above. Each parcel is
+    // stamped with the ward/zone/locality its geometry falls in.
     uploadPropertyFile: builder.mutation({
       query: (formData) => ({
         url: `assets/uploads/property`,
         method: 'POST',
         body: formData,
       }),
+    }),
+    // Re-stamp zone/ward/locality on a batch already imported — for features
+    // uploaded before their ward boundary existed.
+    matchUploadAreas: builder.mutation({
+      query: (uploadId) => ({ url: `assets/uploads/${uploadId}/match-areas`, method: 'POST' }),
+      invalidatesTags: ['Uploads', 'Features', 'Summary'],
     }),
     verifyUpload: builder.mutation({
       query: (uploadId) => ({ url: `assets/uploads/${uploadId}/verify`, method: 'POST' }),
@@ -190,4 +198,5 @@ export const {
   usePublishUploadMutation,
   useRejectUploadMutation,
   useDeleteUploadMutation,
+  useMatchUploadAreasMutation,
 } = assetApi;
